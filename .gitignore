@@ -30,4 +30,6 @@ logs/
 # Session data
 session/
 cookies/
+browser_state/
 *.json
+

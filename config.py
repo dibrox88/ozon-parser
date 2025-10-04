@@ -29,6 +29,7 @@ class Config:
     # Directories
     SCREENSHOTS_DIR = 'screenshots'
     LOGS_DIR = 'logs'
+    BROWSER_STATE_DIR = 'browser_state'
     
     @classmethod
     def validate(cls):

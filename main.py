@@ -19,6 +19,7 @@ from config import Config
 from auth import OzonAuth
 from parser import OzonParser
 from notifier import sync_send_message
+from session_manager import SessionManager
 
 
 def setup_browser_context(browser: Browser) -> BrowserContext:
@@ -88,6 +89,9 @@ def main():
         logger.info("Запуск Ozon Parser")
         sync_send_message("🚀 <b>Ozon Parser запущен</b>\n\nНачинаем работу...")
         
+        # Инициализируем менеджер сессий
+        session_manager = SessionManager()
+        
         # Запускаем браузер
         with sync_playwright() as p:
             logger.info("Запуск браузера...")
@@ -105,21 +109,69 @@ def main():
                 ]
             )
             
-            # Настраиваем контекст
-            context = setup_browser_context(browser)
-            page = context.new_page()
+            # Пробуем загрузить сохраненную сессию
+            context = None
+            needs_auth = True
             
-            # Устанавливаем таймауты
-            page.set_default_timeout(Config.DEFAULT_TIMEOUT)
-            page.set_default_navigation_timeout(Config.NAVIGATION_TIMEOUT)
+            if session_manager.session_exists():
+                logger.info("🔄 Пробуем загрузить сохраненную сессию...")
+                sync_send_message("🔄 Найдена сохраненная сессия. Проверяем...")
+                
+                context = session_manager.load_session(browser)
+                
+                if context:
+                    # Проверяем, работает ли сессия
+                    page = context.new_page()
+                    page.set_default_timeout(Config.DEFAULT_TIMEOUT)
+                    page.set_default_navigation_timeout(Config.NAVIGATION_TIMEOUT)
+                    
+                    try:
+                        # Пробуем открыть страницу заказов
+                        page.goto(Config.OZON_ORDERS_URL, timeout=30000)
+                        page.wait_for_load_state('networkidle', timeout=15000)
+                        
+                        # Проверяем, авторизованы ли мы
+                        auth = OzonAuth(page)
+                        if auth.verify_login():
+                            logger.info("✅ Сессия действительна! Авторизация не требуется.")
+                            sync_send_message("✅ Сессия действительна! Пропускаем авторизацию.")
+                            needs_auth = False
+                        else:
+                            logger.warning("⚠️ Сессия устарела, требуется повторная авторизация")
+                            sync_send_message("⚠️ Сессия устарела. Выполняем авторизацию...")
+                            session_manager.delete_session()
+                            context.close()
+                            context = None
+                    except Exception as e:
+                        logger.warning(f"⚠️ Не удалось использовать сохраненную сессию: {e}")
+                        sync_send_message("⚠️ Не удалось использовать сессию. Выполняем авторизацию...")
+                        session_manager.delete_session()
+                        if context:
+                            context.close()
+                        context = None
+            
+            # Если сессии нет или она не работает - создаем новый контекст и авторизуемся
+            if context is None:
+                context = setup_browser_context(browser)
+                page = context.new_page()
+                page.set_default_timeout(Config.DEFAULT_TIMEOUT)
+                page.set_default_navigation_timeout(Config.NAVIGATION_TIMEOUT)
             
             try:
-                # Авторизация
-                auth = OzonAuth(page)
-                if not auth.login():
-                    logger.error("Не удалось авторизоваться")
-                    sync_send_message("❌ Авторизация не удалась")
-                    return
+                # Авторизация (если нужна)
+                if needs_auth:
+                    auth = OzonAuth(page)
+                    if not auth.login():
+                        logger.error("Не удалось авторизоваться")
+                        sync_send_message("❌ Авторизация не удалась")
+                        return
+                    
+                    # Сохраняем сессию после успешной авторизации
+                    logger.info("💾 Сохраняем сессию...")
+                    if session_manager.save_session(context):
+                        sync_send_message("💾 Сессия сохранена. В следующий раз авторизация не потребуется!")
+                    else:
+                        logger.warning("⚠️ Не удалось сохранить сессию")
                 
                 # Парсинг
                 parser = OzonParser(page)
