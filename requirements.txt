@@ -1,0 +1,9 @@
+playwright==1.40.0
+playwright-stealth==1.0.0
+python-telegram-bot==20.7
+python-dotenv==1.0.0
+requests==2.31.0
+loguru==0.7.2
+pillow==10.1.0
+pyzbar==0.1.9
+opencv-python==4.8.1.78
