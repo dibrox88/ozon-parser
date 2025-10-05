@@ -180,11 +180,44 @@ def main():
                     sync_send_message("❌ Не удалось перейти к заказам")
                     return
                 
-                # Получаем заказы
+                # Получаем список заказов
                 orders = parser.parse_orders()
                 
-                logger.info(f"Парсинг завершен. Получено заказов: {len(orders)}")
-                sync_send_message(f"✅ <b>Парсинг завершен</b>\n\nВсего заказов: {len(orders)}")
+                logger.info(f"Парсинг номеров завершен. Получено заказов: {len(orders)}")
+                sync_send_message(f"✅ <b>Найдено заказов: {len(orders)}</b>\n\nНачинаем парсинг деталей...")
+                
+                # Парсим детали каждого заказа
+                if orders:
+                    logger.info("📄 Начинаем парсинг деталей заказов...")
+                    all_orders_data = []
+                    
+                    # Парсим все заказы
+                    for i, order_number in enumerate(orders, 1):
+                        logger.info(f"📦 [{i}/{len(orders)}] Парсим детали заказа: {order_number}")
+                        sync_send_message(f"📦 Парсим заказ {order_number}")
+                        
+                        order_details = parser.parse_order_details(order_number)
+                        
+                        if order_details:
+                            all_orders_data.append(order_details)
+                            logger.info(f"✅ [{i}/{len(orders)}] Успешно спарсен заказ {order_number}")
+                            logger.info(f"   Товаров: {order_details['items_count']}, Сумма: {order_details['total_amount']}₽")
+                        else:
+                            logger.warning(f"⚠️ [{i}/{len(orders)}] Не удалось спарсить заказ {order_number}")
+                    
+                    logger.info(f"✅ Парсинг завершен. Успешно обработано: {len(all_orders_data)}/{len(orders)} заказов")
+                    sync_send_message(f"✅ <b>Парсинг завершен!</b>\n\nОбработано: {len(all_orders_data)}/{len(orders)} заказов")
+                    
+                    # Экспортируем данные в JSON
+                    if all_orders_data:
+                        from export_data import export_orders
+                        try:
+                            json_file = export_orders(all_orders_data)
+                            logger.info(f"📁 Данные сохранены в: {json_file}")
+                            sync_send_message(f"📁 <b>Данные экспортированы</b>\n\nФайл: {json_file}")
+                        except Exception as e:
+                            logger.error(f"❌ Ошибка при экспорте данных: {e}")
+                            sync_send_message(f"⚠️ Ошибка при экспорте данных: {e}")
                 
                 # Ждем перед закрытием для просмотра результата
                 logger.info("Ожидание перед закрытием браузера...")
