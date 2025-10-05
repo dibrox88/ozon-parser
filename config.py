@@ -15,6 +15,7 @@ class Config:
     # Ozon
     OZON_PHONE = os.getenv('OZON_PHONE', '')
     OZON_EMAIL = os.getenv('OZON_EMAIL', '')
+    OZON_USER_ID = os.getenv('OZON_USER_ID', '')
     OZON_LOGIN_URL = 'https://www.ozon.ru/'
     OZON_ORDERS_URL = 'https://www.ozon.ru/my/orderlist/'
     

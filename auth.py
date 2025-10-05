@@ -1211,26 +1211,48 @@ class OzonAuth:
             # Делаем скриншот
             screenshot = self._take_screenshot('after_login')
             
+            # Сначала проверяем признаки НЕавторизации
+            not_auth_indicators = [
+                'text="Вы не авторизованы"',
+                '[data-widget="myGuest"]',
+                'text="необходимо войти"',
+                '[data-widget="loginButton"]'
+            ]
+            
+            for indicator in not_auth_indicators:
+                try:
+                    element = self.page.query_selector(indicator)
+                    if element and element.is_visible():
+                        logger.warning(f"❌ Обнаружен индикатор неавторизации: {indicator}")
+                        logger.warning(f"Текст элемента: {element.inner_text()[:100]}")
+                        sync_send_photo(screenshot, "❌ Авторизация не выполнена - обнаружено сообщение 'Вы не авторизованы'")
+                        return False
+                except:
+                    pass
+            
             # Проверяем признаки успешной авторизации
             success_indicators = [
                 'text="Мои заказы"',
                 'text="Профиль"',
                 '[data-test-id="user-menu"]',
                 'a[href*="/my/"]',
+                'div[class*="userAvatar"]',
+                '[data-widget="profileMenu"]'
             ]
             
             for indicator in success_indicators:
                 try:
                     element = self.page.query_selector(indicator)
-                    if element:
-                        logger.info(f"Авторизация успешна! Найден индикатор: {indicator}")
+                    if element and element.is_visible():
+                        logger.info(f"✅ Авторизация успешна! Найден индикатор: {indicator}")
                         sync_send_photo(screenshot, "✅ Авторизация успешна!")
                         return True
                 except:
                     pass
             
-            # Если не нашли, все равно отправляем скриншот для проверки
-            sync_send_photo(screenshot, "Результат авторизации (проверьте вручную)")
+            # Если не нашли ни одного индикатора, отправляем скриншот для проверки
+            logger.warning("⚠️ Не удалось определить статус авторизации автоматически")
+            sync_send_photo(screenshot, "⚠️ Результат авторизации не определен (проверьте вручную)")
             
             # Спрашиваем пользователя
             response = sync_wait_for_input(
