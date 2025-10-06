@@ -16,7 +16,7 @@ class ProductMatcher:
     DEFAULT_TYPE = "расходники"
     MAPPINGS_FILE = "product_mappings.json"
     
-    def __init__(self, sheets_products: list, mappings_file: str = None):
+    def __init__(self, sheets_products: list, mappings_file: Optional[str] = None):
         """
         Инициализация.
         

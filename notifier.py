@@ -207,7 +207,7 @@ def sync_wait_for_input(prompt: str, timeout: int = 300) -> Optional[str]:
     if loop.is_running():
         # Создаем новый event loop в отдельном потоке
         import threading
-        result = [None]
+        result: list[Optional[str]] = [None]
         
         def run_async():
             new_loop = asyncio.new_event_loop()

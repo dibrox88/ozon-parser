@@ -111,6 +111,7 @@ def main():
             
             # Пробуем загрузить сохраненную сессию
             context = None
+            page = None
             needs_auth = True
             
             if session_manager.session_exists():
@@ -156,6 +157,10 @@ def main():
                 page = context.new_page()
                 page.set_default_timeout(Config.DEFAULT_TIMEOUT)
                 page.set_default_navigation_timeout(Config.NAVIGATION_TIMEOUT)
+            
+            # Убеждаемся что page определен
+            if page is None:
+                raise RuntimeError("Page не был инициализирован")
             
             try:
                 # Авторизация (если нужна)
@@ -262,7 +267,8 @@ def main():
                 
                 # Ждем перед закрытием для просмотра результата
                 logger.info("Ожидание перед закрытием браузера...")
-                page.wait_for_timeout(5000)
+                if page:
+                    page.wait_for_timeout(5000)
                 
             finally:
                 # Закрываем браузер

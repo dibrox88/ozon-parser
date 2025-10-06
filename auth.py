@@ -52,6 +52,11 @@ class OzonAuth:
             return None
         
         try:
+            # Импортируем библиотеки внутри функции
+            import numpy as np
+            import cv2
+            from pyzbar.pyzbar import decode as qr_decode
+            
             # Убираем префикс data:image/png;base64,
             if 'base64,' in base64_data:
                 base64_data = base64_data.split('base64,')[1]
@@ -1134,7 +1139,7 @@ class OzonAuth:
             logger.error(f"Ошибка при вводе email кода: {e}")
             return False
     
-    def click_login_button(self) -> bool:
+    def click_submit_code_button(self) -> bool:
         """
         Нажать кнопку 'Войти' после ввода кода.
         
@@ -1372,7 +1377,7 @@ class OzonAuth:
                 return False
             
             # Шаг 9: Нажимаем кнопку "Войти" после email кода
-            if not self.click_login_button():
+            if not self.click_submit_code_button():
                 logger.warning("⚠️ Кнопка 'Войти' после email не найдена, пробуем продолжить...")
                 sync_send_message("⚠️ Кнопка 'Войти' не найдена автоматически. Проверяю авторизацию...")
             
