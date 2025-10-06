@@ -58,7 +58,7 @@ class SheetsManager:
         """
         Загрузка товаров из Google Sheets.
         
-        Структура: каждые 3 столбца содержат [цена, наименование, тип]
+        Структура: каждые 4 столбца содержат [цена, наименование, тип, номер заказа]
         
         Args:
             spreadsheet_url: URL таблицы
@@ -66,7 +66,7 @@ class SheetsManager:
             columns_range: Диапазон столбцов для чтения
             
         Returns:
-            Список уникальных товаров [{name, type}, ...]
+            Список уникальных товаров [{name, type, price}, ...]
         """
         try:
             logger.info(f"Загрузка товаров из таблицы: {spreadsheet_url}")
@@ -89,20 +89,22 @@ class SheetsManager:
                 logger.warning("⚠️ Таблица пустая")
                 return []
             
-            # Парсим данные: каждые 3 столбца = [цена, наименование, тип]
+            # Парсим данные: каждые 4 столбца = [цена, наименование, тип, номер заказа]
             products = []
             unique_products = set()  # Для отслеживания уникальных (name, type)
             
             # Проходим по каждой строке
             for row_idx, row in enumerate(all_values, start=1):
-                # Обрабатываем каждую тройку столбцов
-                for col_idx in range(0, len(row), 3):
+                # Обрабатываем каждую четвёрку столбцов
+                for col_idx in range(0, len(row), 4):
                     if col_idx + 2 >= len(row):
-                        break  # Недостаточно столбцов для полной тройки
+                        break  # Недостаточно столбцов для полной четвёрки (минимум нужны price, name, type)
                     
                     price = row[col_idx].strip() if col_idx < len(row) else ""
                     name = row[col_idx + 1].strip() if col_idx + 1 < len(row) else ""
                     product_type = row[col_idx + 2].strip() if col_idx + 2 < len(row) else ""
+                    # Четвёртый столбец (номер заказа) игнорируем
+                    # order_number = row[col_idx + 3].strip() if col_idx + 3 < len(row) else ""
                     
                     # Пропускаем пустые или заголовочные строки
                     if not name or name.lower() in ['наименование', 'название', 'товар']:

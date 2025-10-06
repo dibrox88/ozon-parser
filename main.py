@@ -225,7 +225,7 @@ def main():
                             # Подключаемся к Google Sheets
                             sheets = SheetsManager(Config.GOOGLE_CREDENTIALS_FILE)
                             if sheets.connect():
-                                # Загружаем товары из таблицы
+                                # Загружаем товары из таблицы (структура: цена, название, тип, номер заказа)
                                 catalog_products = sheets.load_products_from_sheet(
                                     Config.GOOGLE_SHEETS_URL,
                                     columns_range="A:AU"
@@ -235,13 +235,19 @@ def main():
                                     logger.info(f"✅ Загружено товаров из каталога: {len(catalog_products)}")
                                     sync_send_message(f"✅ Загружено товаров: {len(catalog_products)}")
                                     
-                                    # Создаём matcher и обогащаем данные
+                                    # Создаём matcher с основным файлом кеша
                                     matcher = ProductMatcher(
                                         catalog_products,
                                         mappings_file=Config.PRODUCT_MAPPINGS_FILE
                                     )
                                     
-                                    all_orders_data = enrich_orders_with_mapping(all_orders_data, matcher)
+                                    # Обогащаем данные с интерактивным режимом (interactive=True)
+                                    all_orders_data = enrich_orders_with_mapping(
+                                        all_orders_data, 
+                                        matcher,
+                                        interactive=True  # ИНТЕРАКТИВНЫЙ РЕЖИМ через Telegram
+                                    )
+                                    
                                     logger.info("✅ Сопоставление завершено")
                                     sync_send_message("✅ <b>Сопоставление завершено!</b>")
                                 else:
