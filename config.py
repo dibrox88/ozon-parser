@@ -32,6 +32,11 @@ class Config:
     LOGS_DIR = 'logs'
     BROWSER_STATE_DIR = 'browser_state'
     
+    # Google Sheets
+    GOOGLE_SHEETS_URL = os.getenv('GOOGLE_SHEETS_URL', '')
+    GOOGLE_CREDENTIALS_FILE = os.getenv('GOOGLE_CREDENTIALS_FILE', 'google_credentials.json')
+    PRODUCT_MAPPINGS_FILE = 'product_mappings.json'
+    
     @classmethod
     def validate(cls):
         """Проверка наличия обязательных настроек."""

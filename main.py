@@ -208,6 +208,46 @@ def main():
                     logger.info(f"✅ Парсинг завершен. Успешно обработано: {len(all_orders_data)}/{len(orders)} заказов")
                     sync_send_message(f"✅ <b>Парсинг завершен!</b>\n\nОбработано: {len(all_orders_data)}/{len(orders)} заказов")
                     
+                    # Сопоставление товаров с каталогом из Google Sheets
+                    if all_orders_data and Config.GOOGLE_SHEETS_URL and Config.GOOGLE_CREDENTIALS_FILE:
+                        try:
+                            logger.info("🔄 Запуск сопоставления товаров с каталогом...")
+                            sync_send_message("🔄 <b>Сопоставление с каталогом...</b>")
+                            
+                            from sheets_manager import SheetsManager
+                            from product_matcher import ProductMatcher, enrich_orders_with_mapping
+                            
+                            # Подключаемся к Google Sheets
+                            sheets = SheetsManager(Config.GOOGLE_CREDENTIALS_FILE)
+                            if sheets.connect():
+                                # Загружаем товары из таблицы
+                                catalog_products = sheets.load_products_from_sheet(
+                                    Config.GOOGLE_SHEETS_URL,
+                                    columns_range="A:AU"
+                                )
+                                
+                                if catalog_products:
+                                    logger.info(f"✅ Загружено товаров из каталога: {len(catalog_products)}")
+                                    sync_send_message(f"✅ Загружено товаров: {len(catalog_products)}")
+                                    
+                                    # Создаём matcher и обогащаем данные
+                                    matcher = ProductMatcher(
+                                        catalog_products,
+                                        mappings_file=Config.PRODUCT_MAPPINGS_FILE
+                                    )
+                                    
+                                    all_orders_data = enrich_orders_with_mapping(all_orders_data, matcher)
+                                    logger.info("✅ Сопоставление завершено")
+                                    sync_send_message("✅ <b>Сопоставление завершено!</b>")
+                                else:
+                                    logger.warning("⚠️ Каталог товаров пуст")
+                            else:
+                                logger.warning("⚠️ Не удалось подключиться к Google Sheets")
+                                
+                        except Exception as e:
+                            logger.error(f"❌ Ошибка при сопоставлении товаров: {e}")
+                            sync_send_message(f"⚠️ Ошибка сопоставления: {e}")
+                    
                     # Экспортируем данные в JSON
                     if all_orders_data:
                         from export_data import export_orders
@@ -218,6 +258,7 @@ def main():
                         except Exception as e:
                             logger.error(f"❌ Ошибка при экспорте данных: {e}")
                             sync_send_message(f"⚠️ Ошибка при экспорте данных: {e}")
+
                 
                 # Ждем перед закрытием для просмотра результата
                 logger.info("Ожидание перед закрытием браузера...")

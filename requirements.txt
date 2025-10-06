@@ -7,3 +7,5 @@ loguru==0.7.2
 pillow==10.1.0
 pyzbar==0.1.9
 opencv-python==4.8.1.78
+gspread==6.0.0
+google-auth==2.27.0

@@ -33,3 +33,9 @@ cookies/
 browser_state/
 *.json
 
+# Google Sheets credentials
+google_credentials.json
+
+# Product mappings cache
+product_mappings.json
+
