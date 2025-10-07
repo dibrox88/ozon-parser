@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 from loguru import logger
 from notifier import sync_send_message
+from excluded_manager import ExcludedOrdersManager
 import time
 
 
@@ -162,8 +163,10 @@ class ProductMatcher:
 def match_product_interactive(
     item: Dict,
     matcher: ProductMatcher,
-    auto_mode: bool = False
-) -> Tuple[str, str]:
+    auto_mode: bool = False,
+    order_number: Optional[str] = None,
+    excluded_manager: Optional[ExcludedOrdersManager] = None
+) -> Tuple[Optional[str], Optional[str]]:
     """
     Интерактивное сопоставление товара с подтверждением через Telegram.
     
@@ -171,9 +174,11 @@ def match_product_interactive(
         item: Словарь с данными товара (name, color, quantity, price)
         matcher: Объект ProductMatcher
         auto_mode: Если True, автоматически выбирать лучшее совпадение без запроса
+        order_number: Номер заказа (для возможности исключения всего заказа)
+        excluded_manager: Менеджер исключённых заказов
         
     Returns:
-        Tuple (mapped_name, mapped_type)
+        Tuple (mapped_name, mapped_type) или (None, None) если заказ исключён
     """
     name = item.get('name', '')
     color = item.get('color', '')
@@ -221,22 +226,29 @@ def match_product_interactive(
 • Название: {name}
 • Цвет: {color or 'не указан'}
 • Количество: {quantity}
-• Цена: {price} ₽
+• Цена: {price} ₽"""
+        
+        if order_number:
+            message += f"\n• Заказ: <code>{order_number}</code>"
+        
+        message += f"""
 
 ❓ <b>Предлагаем тип по умолчанию:</b> <code>{matcher.DEFAULT_TYPE}</code>
 
 💡 <b>Варианты ответа:</b>
 1. Отправьте <code>OK</code> - использовать тип "{matcher.DEFAULT_TYPE}"
-2. Отправьте <code>Название | Тип</code> - ввести вручную
-
-⏳ Ожидаю ваш ответ...
-        """
+2. Отправьте <code>Название | Тип</code> - ввести вручную"""
+        
+        if order_number and excluded_manager:
+            message += f"\n3. Отправьте <code>EXCLUDE</code> - исключить весь заказ {order_number}"
+        
+        message += "\n\n⏳ Ожидаю ваш ответ..."
         
         sync_send_message(message)
         
         from notifier import sync_wait_for_input
         response = sync_wait_for_input(
-            "Отправьте OK или введите 'Название | Тип':",
+            "Отправьте OK, EXCLUDE или введите 'Название | Тип':",
             timeout=300
         )
         
@@ -244,6 +256,16 @@ def match_product_interactive(
             logger.warning(f"⏱️ Таймаут ожидания - используем тип по умолчанию для: {name}")
             mapped_name = name
             mapped_type = matcher.DEFAULT_TYPE
+        elif response.upper() == 'EXCLUDE':
+            if order_number and excluded_manager:
+                excluded_manager.add_excluded(order_number)
+                sync_send_message(f"🚫 <b>Заказ {order_number} исключён!</b>\n\nВсе товары из этого заказа будут пропущены.")
+                logger.info(f"🚫 Заказ {order_number} исключён пользователем")
+                return None, None
+            else:
+                logger.warning("⚠️ Невозможно исключить заказ - нет номера заказа или менеджера")
+                mapped_name = name
+                mapped_type = matcher.DEFAULT_TYPE
         elif response.upper() == 'OK':
             logger.info(f"✅ Пользователь подтвердил тип по умолчанию для: {name}")
             mapped_name = name
@@ -269,10 +291,12 @@ def match_product_interactive(
 • Название: {name}
 • Цвет: {color or 'не указан'}
 • Количество: {quantity}
-• Цена: {price} ₽
-
-✅ <b>Предлагаемые варианты:</b>
-"""
+• Цена: {price} ₽"""
+    
+    if order_number:
+        message += f"\n• Заказ: <code>{order_number}</code>"
+    
+    message += "\n\n✅ <b>Предлагаемые варианты:</b>"
     
     # Собираем уникальные названия и типы
     unique_names = []
@@ -288,14 +312,18 @@ def match_product_interactive(
     
     message += "\n\n💡 <b>Варианты ответа:</b>\n"
     message += "• <code>1-5</code> - выбрать вариант по номеру\n"
-    message += "• <code>Название | Тип</code> - ввести вручную\n"
-    message += "\n⏳ Ожидаю ваш ответ..."
+    message += "• <code>Название | Тип</code> - ввести вручную"
+    
+    if order_number and excluded_manager:
+        message += f"\n• <code>EXCLUDE</code> - исключить весь заказ {order_number}"
+    
+    message += "\n\n⏳ Ожидаю ваш ответ..."
     
     sync_send_message(message)
     
     from notifier import sync_wait_for_input
     response = sync_wait_for_input(
-        "Выберите номер (1-5) или введите 'Название | Тип':",
+        "Выберите номер (1-5), EXCLUDE или введите 'Название | Тип':",
         timeout=300
     )
     
@@ -305,6 +333,17 @@ def match_product_interactive(
         best_match = matches[0]
         mapped_name = best_match['name']
         mapped_type = best_match['type']
+    elif response.upper() == 'EXCLUDE':
+        if order_number and excluded_manager:
+            excluded_manager.add_excluded(order_number)
+            sync_send_message(f"🚫 <b>Заказ {order_number} исключён!</b>\n\nВсе товары из этого заказа будут пропущены.")
+            logger.info(f"🚫 Заказ {order_number} исключён пользователем")
+            return None, None
+        else:
+            logger.warning("⚠️ Невозможно исключить заказ - нет номера заказа или менеджера")
+            best_match = matches[0]
+            mapped_name = best_match['name']
+            mapped_type = best_match['type']
     elif response.isdigit():
         # Выбран номер
         choice = int(response)
@@ -337,7 +376,7 @@ def match_product_interactive(
     return mapped_name, mapped_type
 
 
-def enrich_orders_with_mapping(orders_data: list, matcher: ProductMatcher, interactive: bool = True) -> list:
+def enrich_orders_with_mapping(orders_data: list, matcher: ProductMatcher, interactive: bool = True, excluded_manager: Optional[ExcludedOrdersManager] = None) -> list:
     """
     Обогатить данные заказов сопоставлениями из каталога.
     
@@ -345,38 +384,61 @@ def enrich_orders_with_mapping(orders_data: list, matcher: ProductMatcher, inter
         orders_data: Список заказов с товарами
         matcher: Объект ProductMatcher
         interactive: Если True, использовать интерактивный режим через Telegram
+        excluded_manager: Менеджер исключённых заказов (для возможности исключения)
         
     Returns:
-        Обогащённый список заказов
+        Обогащённый список заказов (без исключённых)
     """
     logger.info("🔄 Начинаем сопоставление товаров с каталогом...")
     
-    # Сначала извлекаем уникальные товары
+    # Сначала извлекаем уникальные товары с информацией о заказах
     unique_items_dict = {}
+    item_to_orders = {}  # Для отслеживания, в каких заказах встречается товар
+    
     for order in orders_data:
+        order_number = order.get('order_number', '')
         for item in order.get('items', []):
             key = f"{item['name']}|{item.get('color', '')}"
             if key not in unique_items_dict:
-                unique_items_dict[key] = item
+                unique_items_dict[key] = item.copy()
+                item_to_orders[key] = []
+            
+            if order_number not in item_to_orders[key]:
+                item_to_orders[key].append(order_number)
     
     unique_items = list(unique_items_dict.values())
     logger.info(f"📦 Уникальных товаров для сопоставления: {len(unique_items)}")
     
     # Создаём кеш сопоставлений
     mapping_cache = {}
+    orders_to_exclude = set()
     
     # Сопоставляем каждый уникальный товар
     for idx, item in enumerate(unique_items, 1):
         logger.info(f"[{idx}/{len(unique_items)}] Обрабатываем: {item['name']}")
         
+        key = f"{item['name']}|{item.get('color', '')}"
+        
+        # Берём первый заказ из списка для контекста
+        order_numbers = item_to_orders.get(key, [])
+        first_order = order_numbers[0] if order_numbers else None
+        
         # Используем интерактивный или автоматический режим
         mapped_name, mapped_type = match_product_interactive(
             item, 
             matcher, 
-            auto_mode=not interactive
+            auto_mode=not interactive,
+            order_number=first_order,
+            excluded_manager=excluded_manager
         )
         
-        key = f"{item['name']}|{item.get('color', '')}"
+        # Если товар исключён (заказ исключён)
+        if mapped_name is None and mapped_type is None:
+            logger.info(f"🚫 Товар из исключённого заказа: {item['name']}")
+            # Добавляем все заказы с этим товаром в список исключённых
+            orders_to_exclude.update(order_numbers)
+            continue
+        
         mapping_cache[key] = {
             'mapped_name': mapped_name,
             'mapped_type': mapped_type
@@ -384,12 +446,21 @@ def enrich_orders_with_mapping(orders_data: list, matcher: ProductMatcher, inter
         
         logger.info(f"✅ [{idx}/{len(unique_items)}] {item['name']} → {mapped_name} ({mapped_type})")
     
-    # Применяем сопоставления ко всем товарам
+    # Применяем сопоставления ко всем товарам (исключая исключённые заказы)
     enriched_orders = []
     total_items = 0
     matched_items = 0
+    excluded_orders_count = 0
     
     for order in orders_data:
+        order_number = order.get('order_number', '')
+        
+        # Пропускаем исключённые заказы
+        if order_number in orders_to_exclude:
+            excluded_orders_count += 1
+            logger.info(f"⏭️ Пропускаем исключённый заказ: {order_number}")
+            continue
+        
         enriched_order = order.copy()
         enriched_items = []
         
@@ -415,5 +486,7 @@ def enrich_orders_with_mapping(orders_data: list, matcher: ProductMatcher, inter
         enriched_orders.append(enriched_order)
     
     logger.info(f"✅ Сопоставлено товаров: {matched_items}/{total_items}")
+    if excluded_orders_count > 0:
+        logger.info(f"🚫 Исключено заказов: {excluded_orders_count}")
     
     return enriched_orders

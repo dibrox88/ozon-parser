@@ -211,6 +211,24 @@ def main():
                             logger.warning(f"⚠️ [{i}/{len(orders)}] Не удалось спарсить заказ {order_number}")
                     
                     logger.info(f"✅ Парсинг завершен. Успешно обработано: {len(all_orders_data)}/{len(orders)} заказов")
+                    
+                    # Фильтруем исключённые заказы
+                    from excluded_manager import ExcludedOrdersManager
+                    excluded_manager = ExcludedOrdersManager()
+                    
+                    if excluded_manager.get_count() > 0:
+                        logger.info(f"📋 В списке исключённых: {excluded_manager.get_count()} заказов")
+                        valid_orders, excluded_orders = excluded_manager.filter_orders(all_orders_data)
+                        
+                        if excluded_orders:
+                            logger.info(f"⏭️ Пропущено исключённых заказов: {len(excluded_orders)}")
+                            excluded_nums = [o.get('order_number', '?') for o in excluded_orders]
+                            sync_send_message(f"⏭️ <b>Пропущено исключённых заказов:</b> {len(excluded_orders)}\n\n" + 
+                                            "\n".join(f"• <code>{num}</code>" for num in excluded_nums))
+                        
+                        all_orders_data = valid_orders
+                    
+                    logger.info(f"✅ Заказов для обработки: {len(all_orders_data)}")
                     sync_send_message(f"✅ <b>Парсинг завершен!</b>\n\nОбработано: {len(all_orders_data)}/{len(orders)} заказов")
                     
                     # Сопоставление товаров с каталогом из Google Sheets
@@ -245,7 +263,8 @@ def main():
                                     all_orders_data = enrich_orders_with_mapping(
                                         all_orders_data, 
                                         matcher,
-                                        interactive=True  # ИНТЕРАКТИВНЫЙ РЕЖИМ через Telegram
+                                        interactive=True,  # ИНТЕРАКТИВНЫЙ РЕЖИМ через Telegram
+                                        excluded_manager=excluded_manager  # Передаём менеджер исключений
                                     )
                                     
                                     logger.info("✅ Сопоставление завершено")
@@ -266,6 +285,21 @@ def main():
                             json_file = export_orders(all_orders_data)
                             logger.info(f"📁 Данные сохранены в: {json_file}")
                             sync_send_message(f"📁 <b>Данные экспортированы</b>\n\nФайл: {json_file}")
+                            
+                            # Синхронизация с Google Sheets
+                            try:
+                                logger.info("🔄 Запуск синхронизации с Google Sheets...")
+                                from sheets_sync import sync_to_sheets
+                                
+                                if sync_to_sheets(json_file):
+                                    logger.info("✅ Синхронизация с Google Sheets завершена")
+                                else:
+                                    logger.warning("⚠️ Синхронизация не удалась")
+                                    
+                            except Exception as e:
+                                logger.error(f"❌ Ошибка синхронизации с Google Sheets: {e}")
+                                sync_send_message(f"⚠️ Ошибка синхронизации: {e}")
+                            
                         except Exception as e:
                             logger.error(f"❌ Ошибка при экспорте данных: {e}")
                             sync_send_message(f"⚠️ Ошибка при экспорте данных: {e}")
