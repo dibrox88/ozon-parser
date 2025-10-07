@@ -6,7 +6,7 @@ MVP версия: базовая запись новых заказов.
 import gspread
 from google.oauth2.service_account import Credentials
 from loguru import logger
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any, cast
 from config import Config
 from notifier import sync_send_message
 
@@ -36,8 +36,8 @@ class SheetsSynchronizer:
         """
         self.credentials_file = credentials_file
         self.client: Optional[gspread.Client] = None
-        self.spreadsheet = None
-        self.worksheet = None
+        self.spreadsheet: Optional[gspread.Spreadsheet] = None
+        self.worksheet: Optional[gspread.Worksheet] = None
         
     def connect(self) -> bool:
         """Подключение к Google Sheets API с правами записи."""
@@ -100,10 +100,10 @@ class SheetsSynchronizer:
             # Читаем столбец B (order_number)
             column_b = self.worksheet.col_values(2)  # 2 = столбец B
             
-            # Фильтруем пустые и заголовки
-            existing_orders = [
-                order_num for order_num in column_b 
-                if order_num and order_num not in ['order_number', 'Номер заказа', '']
+            # Фильтруем пустые и заголовки, приводим к строкам
+            existing_orders: List[str] = [
+                str(order_num) for order_num in column_b 
+                if order_num and str(order_num) not in ['order_number', 'Номер заказа', '']
             ]
             
             logger.info(f"📋 Найдено существующих заказов в таблице: {len(existing_orders)}")
@@ -153,12 +153,12 @@ class SheetsSynchronizer:
         logger.debug(f"Подготовлено {len(rows)} строк для заказа {order_number}")
         return rows
     
-    def sync_orders(self, orders_data: List[Dict]) -> bool:
+    def sync_orders(self, orders_data: Dict[str, Any]) -> bool:
         """
         Синхронизировать заказы с Google Sheets (MVP версия).
         
         Args:
-            orders_data: Список заказов из ozon_orders.json
+            orders_data: Словарь с данными заказов из ozon_orders.json
             
         Returns:
             True если успешно
@@ -171,8 +171,9 @@ class SheetsSynchronizer:
             existing_orders = self.get_existing_orders()
             
             # Фильтруем новые заказы
+            orders_list = orders_data.get('orders', [])
             new_orders = [
-                order for order in orders_data['orders']
+                order for order in orders_list
                 if order.get('order_number') not in existing_orders
             ]
             
@@ -192,16 +193,21 @@ class SheetsSynchronizer:
             
             logger.info(f"📝 Всего строк для добавления: {len(all_rows)}")
             
+            # Проверяем, что worksheet не None
+            if self.worksheet is None:
+                raise RuntimeError("Worksheet не инициализирован")
+            
             # Находим последнюю непустую строку в столбце A
             column_a = self.worksheet.col_values(1)
-            last_row = len([cell for cell in column_a if cell.strip()]) + 1
+            last_row = len([cell for cell in column_a if isinstance(cell, str) and cell.strip()]) + 1
             
             logger.info(f"📍 Начало записи с строки: {last_row}")
             
             # Записываем данные
             if all_rows:
                 start_cell = f"A{last_row}"
-                self.worksheet.update(start_cell, all_rows, value_input_option='USER_ENTERED')
+                # type: ignore для gspread API
+                self.worksheet.update(range_name=start_cell, values=all_rows, value_input_option='USER_ENTERED')  # type: ignore[arg-type]
                 
                 logger.info(f"✅ Записано {len(all_rows)} строк в таблицу")
                 sync_send_message(f"✅ <b>Записано строк:</b> {len(all_rows)}\n<b>Новых заказов:</b> {len(new_orders)}")
