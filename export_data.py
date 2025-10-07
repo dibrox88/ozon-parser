@@ -27,16 +27,15 @@ class DataExporter:
         
         Args:
             orders_data: Список заказов с данными
-            filename: Имя файла (опционально, автогенерируется если не указано)
+            filename: Имя файла (если None, используется ozon_orders.json)
         
         Returns:
             Путь к сохранённому файлу
         """
         try:
-            # Генерируем имя файла, если не указано
+            # Используем единый файл ozon_orders.json по умолчанию
             if filename is None:
-                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                filename = f"ozon_orders_{timestamp}.json"
+                filename = "ozon_orders.json"
             
             # Полный путь к файлу
             filepath = self.output_dir / filename

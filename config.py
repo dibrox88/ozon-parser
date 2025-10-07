@@ -37,6 +37,10 @@ class Config:
     GOOGLE_CREDENTIALS_FILE = os.getenv('GOOGLE_CREDENTIALS_FILE', 'google_credentials.json')
     PRODUCT_MAPPINGS_FILE = 'product_mappings.json'
     
+    # Google Sheets - GID листов
+    GOOGLE_SHEETS_CATALOG_GID = '1473954199'  # Лист "Настройки" с каталогом товаров
+    GOOGLE_SHEETS_SYNC_GID = '1946316259'     # Лист для синхронизации заказов (A:I)
+    
     @classmethod
     def validate(cls):
         """Проверка наличия обязательных настроек."""
