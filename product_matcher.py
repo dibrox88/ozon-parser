@@ -4,10 +4,11 @@
 
 import json
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 from loguru import logger
 from notifier import sync_send_message
 from excluded_manager import ExcludedOrdersManager
+from bundle_manager import BundleManager, create_bundle_item
 import time
 
 
@@ -28,9 +29,56 @@ class ProductMatcher:
         self.catalog = sheets_products
         self.mappings_file = mappings_file or self.MAPPINGS_FILE
         self.mappings = self._load_mappings()
+        self.type_map = self._create_type_map()
         
         logger.info(f"🔄 Загружено товаров из каталога: {len(self.catalog)}")
         logger.info(f"📋 Загружено сохранённых сопоставлений: {len(self.mappings)}")
+        logger.info(f"🏷️ Создан маппинг типов: {len(self.type_map)} уникальных типов")
+    
+    def _create_type_map(self) -> Dict[int, str]:
+        """
+        Создать маппинг номер → тип товара из каталога.
+        
+        Returns:
+            Словарь {1: "тип1", 2: "тип2", ...}
+        """
+        # Собираем уникальные типы из каталога
+        unique_types = set()
+        for product in self.catalog:
+            product_type = product.get('type', '').strip()
+            if product_type:
+                unique_types.add(product_type)
+        
+        # Сортируем и создаём маппинг
+        sorted_types = sorted(unique_types)
+        type_map = {i + 1: type_name for i, type_name in enumerate(sorted_types)}
+        
+        logger.debug(f"📋 Типы товаров: {type_map}")
+        return type_map
+    
+    def get_type_name(self, type_number: int) -> Optional[str]:
+        """
+        Получить название типа по номеру.
+        
+        Args:
+            type_number: Номер типа
+            
+        Returns:
+            Название типа или None
+        """
+        return self.type_map.get(type_number)
+    
+    def get_type_list_message(self) -> str:
+        """
+        Создать сообщение со списком доступных типов.
+        
+        Returns:
+            Отформатированное сообщение
+        """
+        lines = ["📋 <b>Доступные типы товаров:</b>\n"]
+        for num, type_name in sorted(self.type_map.items()):
+            lines.append(f"  <b>{num}</b> - {type_name}")
+        return "\n".join(lines)
     
     def _load_mappings(self) -> Dict[str, Dict[str, str]]:
         """Загрузить сохранённые сопоставления из файла."""
@@ -160,6 +208,222 @@ class ProductMatcher:
         return matches[:5]  # Топ-5
 
 
+def split_product_interactive(
+    item: Dict,
+    matcher: ProductMatcher,
+    bundle_manager: BundleManager,
+    order_number: Optional[str] = None
+) -> Optional[Dict]:
+    """
+    Интерактивная разбивка товара на компоненты через Telegram.
+    
+    Args:
+        item: Словарь с данными товара
+        matcher: Объект ProductMatcher
+        bundle_manager: Менеджер связок
+        order_number: Номер заказа
+        
+    Returns:
+        Item с компонентами или None при отмене
+    """
+    name = item.get('name', '')
+    price = item.get('price', 0)
+    quantity = item.get('quantity', 1)
+    
+    logger.info(f"🔧 Начало разбивки товара: {name[:50]}...")
+    
+    # Показываем список типов
+    type_list_msg = matcher.get_type_list_message()
+    
+    message = f"""
+📦 <b>РАЗБИВКА ТОВАРА</b>
+
+<b>Товар:</b> {name}
+<b>Цена:</b> {price} ₽
+<b>Количество:</b> {quantity}
+
+{type_list_msg}
+
+💡 <b>Введите схему разбивки:</b>
+Формат: <code>тип1-тип2-тип3</code>
+
+Пример: <code>2-3-5</code> означает:
+• 1-я часть: тип 2 (корпус)
+• 2-я часть: тип 3 (кулер)  
+• 3-я часть: тип 5 (блок питания)
+
+⏳ Ожидаю схему разбивки..."""
+    
+    sync_send_message(message)
+    
+    from notifier import sync_wait_for_input
+    schema_input = sync_wait_for_input("Введите схему (например: 2-3-5) или CANCEL:", timeout=300)
+    
+    if not schema_input or schema_input.upper() == 'CANCEL':
+        sync_send_message("❌ Разбивка отменена")
+        return None
+    
+    # Парсим схему
+    try:
+        type_numbers = [int(x.strip()) for x in schema_input.split('-')]
+    except ValueError:
+        sync_send_message(f"❌ Некорректная схема: {schema_input}\nОжидался формат: 2-3-5")
+        return None
+    
+    # Проверяем валидность типов
+    invalid_types = [t for t in type_numbers if t not in matcher.type_map]
+    if invalid_types:
+        sync_send_message(f"❌ Некорректные номера типов: {invalid_types}\n\n{type_list_msg}")
+        return None
+    
+    components = []
+    
+    # Для каждого типа выбираем товар и цену
+    for i, type_num in enumerate(type_numbers, 1):
+        type_name = matcher.get_type_name(type_num)
+        
+        # Получаем товары этого типа
+        type_products = [p for p in matcher.catalog if p.get('type') == type_name]
+        
+        if not type_products:
+            sync_send_message(f"⚠️ Нет товаров типа '{type_name}' в каталоге. Пропускаем.")
+            continue
+        
+        # Показываем варианты
+        variants_msg = f"""
+🔧 <b>Часть {i}/{len(type_numbers)}</b>
+
+<b>Тип:</b> {type_name}
+
+<b>Выберите товар:</b>
+"""
+        for idx, product in enumerate(type_products[:15], 1):  # Максимум 15 вариантов
+            variants_msg += f"\n{idx}. {product['name']} ({product.get('price', 0)} ₽)"
+        
+        variants_msg += "\n\n💡 Введите номер товара:"
+        
+        sync_send_message(variants_msg)
+        
+        choice = sync_wait_for_input(f"Выберите товар (1-{min(15, len(type_products))}):", timeout=180)
+        
+        if not choice or not choice.isdigit():
+            sync_send_message(f"❌ Некорректный выбор. Отмена разбивки.")
+            return None
+        
+        choice_idx = int(choice) - 1
+        if choice_idx < 0 or choice_idx >= len(type_products):
+            sync_send_message(f"❌ Номер вне диапазона. Отмена разбивки.")
+            return None
+        
+        selected_product = type_products[choice_idx]
+        
+        # Запрашиваем цену
+        price_msg = f"""
+💰 <b>Укажите цену для:</b>
+{selected_product['name']}
+
+<b>Рекомендуемая цена:</b> {selected_product.get('price', 0)} ₽
+
+💡 Введите цену (число):"""
+        
+        sync_send_message(price_msg)
+        
+        price_input = sync_wait_for_input("Введите цену:", timeout=120)
+        
+        if not price_input:
+            sync_send_message(f"❌ Цена не указана. Отмена разбивки.")
+            return None
+        
+        try:
+            component_price = float(price_input.replace(',', '.'))
+        except ValueError:
+            sync_send_message(f"❌ Некорректная цена: {price_input}")
+            return None
+        
+        components.append({
+            "mapped_name": selected_product['name'],
+            "mapped_type": type_name,
+            "price": component_price
+        })
+        
+        logger.info(f"✅ Добавлен компонент {i}: {selected_product['name']} = {component_price}₽")
+    
+    if not components:
+        sync_send_message("❌ Не добавлено ни одного компонента")
+        return None
+    
+    # Проверка суммы
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        total = sum(c['price'] for c in components)
+        
+        if abs(total - price) < 0.01:  # Совпадение
+            break
+        
+        sync_send_message(f"""
+⚠️ <b>Несовпадение суммы!</b>
+
+Сумма компонентов: {total} ₽
+Цена товара: {price} ₽
+Разница: {total - price} ₽
+
+💡 <b>Введите цены заново:</b>""")
+        
+        # Перезапрос цен
+        for i, component in enumerate(components, 1):
+            price_msg = f"""
+💰 <b>Цена {i}/{len(components)}:</b>
+{component['mapped_name']}
+
+Текущая цена: {component['price']} ₽
+
+Введите новую цену:"""
+            
+            sync_send_message(price_msg)
+            
+            price_input = sync_wait_for_input(f"Цена для {component['mapped_name']}:", timeout=120)
+            
+            if price_input:
+                try:
+                    component['price'] = float(price_input.replace(',', '.'))
+                except ValueError:
+                    pass
+    
+    # Финальная проверка
+    total = sum(c['price'] for c in components)
+    if abs(total - price) >= 0.01:
+        sync_send_message(f"""
+❌ <b>Суммы не совпадают после {max_attempts} попыток!</b>
+
+Сумма: {total} ₽
+Нужно: {price} ₽
+
+Разбивка отменена.""")
+        return None
+    
+    # Сохраняем связку
+    if bundle_manager.create_bundle(name, components, price):
+        sync_send_message(f"""
+✅ <b>Связка создана!</b>
+
+<b>Товар:</b> {name}
+<b>Компонентов:</b> {len(components)}
+<b>Общая цена:</b> {price} ₽
+
+Детали:""")
+        
+        for i, comp in enumerate(components, 1):
+            sync_send_message(f"{i}. {comp['mapped_name']} = {comp['price']}₽")
+        
+        # Создаём bundle item
+        bundle_item = create_bundle_item(item, components)
+        logger.info(f"✅ Создан bundle item для: {name[:50]}...")
+        return bundle_item
+    
+    sync_send_message("❌ Ошибка сохранения связки")
+    return None
+
+
 def match_product_interactive(
     item: Dict,
     matcher: ProductMatcher,
@@ -237,10 +501,11 @@ def match_product_interactive(
 
 💡 <b>Варианты ответа:</b>
 1. Отправьте <code>OK</code> - использовать тип "{matcher.DEFAULT_TYPE}"
-2. Отправьте <code>Название | Тип</code> - ввести вручную"""
+2. Отправьте <code>Название | Тип</code> - ввести вручную
+3. Отправьте <code>Р</code> - разбить товар на компоненты"""
         
         if order_number and excluded_manager:
-            message += f"\n3. Отправьте <code>EXCLUDE</code> - исключить весь заказ {order_number}"
+            message += f"\n4. Отправьте <code>EXCLUDE</code> - исключить весь заказ {order_number}"
         
         message += "\n\n⏳ Ожидаю ваш ответ..."
         
@@ -256,6 +521,11 @@ def match_product_interactive(
             logger.warning(f"⏱️ Таймаут ожидания - используем тип по умолчанию для: {name}")
             mapped_name = name
             mapped_type = matcher.DEFAULT_TYPE
+        elif response.upper() == 'Р':
+            # Разбивка товара
+            logger.info(f"🔧 Пользователь выбрал разбивку для: {name}")
+            # Вернем специальный маркер - обработка будет в enrich_orders_with_mapping
+            return "SPLIT", None
         elif response.upper() == 'EXCLUDE':
             if order_number and excluded_manager:
                 excluded_manager.add_excluded(order_number)
@@ -312,7 +582,8 @@ def match_product_interactive(
     
     message += "\n\n💡 <b>Варианты ответа:</b>\n"
     message += "• <code>1-5</code> - выбрать вариант по номеру\n"
-    message += "• <code>Название | Тип</code> - ввести вручную"
+    message += "• <code>Название | Тип</code> - ввести вручную\n"
+    message += "• <code>Р</code> - разбить товар на компоненты"
     
     if order_number and excluded_manager:
         message += f"\n• <code>EXCLUDE</code> - исключить весь заказ {order_number}"
@@ -333,6 +604,10 @@ def match_product_interactive(
         best_match = matches[0]
         mapped_name = best_match['name']
         mapped_type = best_match['type']
+    elif response.upper() == 'Р':
+        # Разбивка товара
+        logger.info(f"🔧 Пользователь выбрал разбивку для: {name}")
+        return "SPLIT", None
     elif response.upper() == 'EXCLUDE':
         if order_number and excluded_manager:
             excluded_manager.add_excluded(order_number)
@@ -376,7 +651,13 @@ def match_product_interactive(
     return mapped_name, mapped_type
 
 
-def enrich_orders_with_mapping(orders_data: list, matcher: ProductMatcher, interactive: bool = True, excluded_manager: Optional[ExcludedOrdersManager] = None) -> list:
+def enrich_orders_with_mapping(
+    orders_data: list, 
+    matcher: ProductMatcher, 
+    interactive: bool = True, 
+    excluded_manager: Optional[ExcludedOrdersManager] = None,
+    bundle_manager: Optional[BundleManager] = None
+) -> list:
     """
     Обогатить данные заказов сопоставлениями из каталога.
     
@@ -385,11 +666,16 @@ def enrich_orders_with_mapping(orders_data: list, matcher: ProductMatcher, inter
         matcher: Объект ProductMatcher
         interactive: Если True, использовать интерактивный режим через Telegram
         excluded_manager: Менеджер исключённых заказов (для возможности исключения)
+        bundle_manager: Менеджер связок товаров (для разбивки на компоненты)
         
     Returns:
         Обогащённый список заказов (без исключённых)
     """
     logger.info("🔄 Начинаем сопоставление товаров с каталогом...")
+    
+    # Инициализируем bundle_manager если не передан
+    if bundle_manager is None:
+        bundle_manager = BundleManager()
     
     # Сначала извлекаем уникальные товары с информацией о заказах
     unique_items_dict = {}
@@ -439,6 +725,60 @@ def enrich_orders_with_mapping(orders_data: list, matcher: ProductMatcher, inter
             orders_to_exclude.update(order_numbers)
             continue
         
+        # Обработка разбивки товара
+        if mapped_name == "SPLIT" and mapped_type is None:
+            logger.info(f"🔧 Разбивка товара: {item['name'][:50]}...")
+            
+            # Проверяем, есть ли уже сохранённая связка
+            if bundle_manager.has_bundle(item['name']):
+                existing_bundle = bundle_manager.get_bundle(item['name'])
+                
+                # Проверяем что связка успешно получена
+                if existing_bundle:
+                    # Показываем детали и спрашиваем про переиспользование
+                    from notifier import sync_send_message, sync_wait_for_input
+                    
+                    reuse_msg = f"""
+📦 <b>Найдена сохранённая связка!</b>
+
+<b>Товар:</b> {item['name']}
+<b>Компонентов:</b> {len(existing_bundle['components'])}
+
+<b>Детали:</b>"""
+                    sync_send_message(reuse_msg)
+                    
+                    for i, comp in enumerate(existing_bundle['components'], 1):
+                        sync_send_message(
+                            f"  {i}. {comp['mapped_name']} ({comp['mapped_type']}) = {comp['price']}₽"
+                        )
+                    
+                    sync_send_message("\n💡 <b>Варианты ответа:</b>\n• <code>ДА</code> - использовать сохранённую\n• <code>НЕТ</code> - создать новую")
+                    
+                    reuse_response = sync_wait_for_input("ДА или НЕТ:", timeout=120)
+                    
+                    if reuse_response and reuse_response.upper() == 'ДА':
+                        # Переиспользуем существующую связку
+                        bundle_item = create_bundle_item(item, existing_bundle['components'])
+                        mapping_cache[key] = {'is_bundle': True, 'bundle_item': bundle_item}
+                        logger.info(f"♻️ Переиспользована связка для: {item['name'][:50]}...")
+                        continue
+            
+            # Создаём новую связку
+            bundle_item = split_product_interactive(item, matcher, bundle_manager, first_order)
+            
+            if bundle_item:
+                mapping_cache[key] = {'is_bundle': True, 'bundle_item': bundle_item}
+                logger.info(f"✅ Создана связка для: {item['name'][:50]}...")
+            else:
+                logger.warning(f"⚠️ Разбивка отменена для: {item['name'][:50]}...")
+                # Fallback к обычному маппингу
+                mapping_cache[key] = {
+                    'mapped_name': item['name'],
+                    'mapped_type': matcher.DEFAULT_TYPE
+                }
+            
+            continue
+        
         mapping_cache[key] = {
             'mapped_name': mapped_name,
             'mapped_type': mapped_type
@@ -469,18 +809,41 @@ def enrich_orders_with_mapping(orders_data: list, matcher: ProductMatcher, inter
             
             key = f"{item['name']}|{item.get('color', '')}"
             
-            # Добавляем новые поля из кеша
-            enriched_item = item.copy()
+            # Проверяем кеш
             if key in mapping_cache:
-                enriched_item['mapped_name'] = mapping_cache[key]['mapped_name']
-                enriched_item['mapped_type'] = mapping_cache[key]['mapped_type']
-                matched_items += 1
+                cache_entry = mapping_cache[key]
+                
+                # Если это связка - заменяем товар на компоненты
+                if cache_entry.get('is_bundle'):
+                    bundle_item = cache_entry['bundle_item']
+                    # Добавляем каждый компонент как отдельный товар
+                    for component in bundle_item['components']:
+                        component_item = {
+                            'name': item['name'],  # Оригинальное название
+                            'price': component['price'],
+                            'quantity': item['quantity'],
+                            'color': item.get('color', ''),
+                            'mapped_name': component['mapped_name'],
+                            'mapped_type': component['mapped_type'],
+                            'is_bundle_component': True,
+                            'bundle_key': item['name']
+                        }
+                        enriched_items.append(component_item)
+                        matched_items += 1
+                else:
+                    # Обычный маппинг
+                    enriched_item = item.copy()
+                    enriched_item['mapped_name'] = cache_entry['mapped_name']
+                    enriched_item['mapped_type'] = cache_entry['mapped_type']
+                    enriched_items.append(enriched_item)
+                    matched_items += 1
             else:
                 # На всякий случай, если что-то пропустили
+                enriched_item = item.copy()
                 enriched_item['mapped_name'] = item['name']
                 enriched_item['mapped_type'] = matcher.DEFAULT_TYPE
-            
-            enriched_items.append(enriched_item)
+                enriched_items.append(enriched_item)
+
         
         enriched_order['items'] = enriched_items
         enriched_orders.append(enriched_order)

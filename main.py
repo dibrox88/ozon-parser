@@ -239,6 +239,7 @@ def main():
                             
                             from sheets_manager import SheetsManager
                             from product_matcher import ProductMatcher, enrich_orders_with_mapping
+                            from bundle_manager import BundleManager
                             
                             # Подключаемся к Google Sheets
                             sheets = SheetsManager(Config.GOOGLE_CREDENTIALS_FILE)
@@ -259,12 +260,16 @@ def main():
                                         mappings_file=Config.PRODUCT_MAPPINGS_FILE
                                     )
                                     
+                                    # Создаём менеджер связок
+                                    bundle_manager = BundleManager()
+                                    
                                     # Обогащаем данные с интерактивным режимом (interactive=True)
                                     all_orders_data = enrich_orders_with_mapping(
                                         all_orders_data, 
                                         matcher,
                                         interactive=True,  # ИНТЕРАКТИВНЫЙ РЕЖИМ через Telegram
-                                        excluded_manager=excluded_manager  # Передаём менеджер исключений
+                                        excluded_manager=excluded_manager,  # Передаём менеджер исключений
+                                        bundle_manager=bundle_manager  # Передаём менеджер связок
                                     )
                                     
                                     logger.info("✅ Сопоставление завершено")
