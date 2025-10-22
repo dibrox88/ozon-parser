@@ -130,15 +130,17 @@ class OzonParser:
                 logger.warning("Не найден элемент 'Товары'")
                 return None
             
-            # Получаем родительский контейнер
-            parent = товары_элемент.evaluate('el => el.closest("div.ev5_15, div.ve5_15, div")')
+            # Получаем родительский контейнер (без использования динамических классов)
+            # Ищем ближайший div-контейнер с ценой
+            parent = товары_элемент.evaluate('el => el.closest("div")')
             
             if not parent:
                 logger.warning("Не найден родительский контейнер для суммы")
                 return None
             
-            # Ищем span с ₽ внутри родительского контейнера
-            parent_element = self.page.query_selector(f'xpath=//*[contains(text(), "Товары")]/ancestor::div[contains(@class, "ev5_15") or contains(@class, "ve5_15")]')
+            # Ищем span с ₽ внутри родительского контейнера (без динамических классов)
+            # Используем XPath: находим "Товары" и поднимаемся к родительскому div
+            parent_element = self.page.query_selector(f'xpath=//*[contains(text(), "Товары")]/ancestor::div[.//span[contains(text(), "₽")]]')
             
             if parent_element:
                 # Ищем все span внутри
@@ -312,7 +314,7 @@ class OzonParser:
                 group_status = self._determine_item_group_status(group, fallback_status)
                 
                 # Ищем блоки товаров внутри группы
-                item_blocks = group.query_selector_all('div.f2l_15')
+                item_blocks = group.query_selector_all('[data-widget="shipmentWidget"]')
                 
                 for item_block in item_blocks:
                     try:
