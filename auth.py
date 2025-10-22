@@ -97,11 +97,17 @@ class OzonAuth:
         Returns:
             Путь к скриншоту
         """
-        timestamp = int(time.time())
-        filename = f"{Config.SCREENSHOTS_DIR}/{name}_{timestamp}.png"
-        self.page.screenshot(path=filename, full_page=True)
-        logger.info(f"Скриншот сохранен: {filename}")
-        return filename
+        try:
+            timestamp = int(time.time())
+            filename = f"{Config.SCREENSHOTS_DIR}/{name}_{timestamp}.png"
+            # Уменьшаем таймаут до 10 секунд
+            self.page.screenshot(path=filename, full_page=True, timeout=10000)
+            logger.info(f"Скриншот сохранен: {filename}")
+            return filename
+        except Exception as e:
+            logger.error(f"Ошибка при создании скриншота '{name}': {e}")
+            # Возвращаем пустой путь, но не ломаем процесс
+            return ""
     
     def open_login_page(self) -> bool:
         """
@@ -119,8 +125,8 @@ class OzonAuth:
             time.sleep(2)
             
             # Делаем скриншот
-            screenshot = self._take_screenshot('main_page')
-            sync_send_photo(screenshot, "Главная страница Ozon открыта")
+            #screenshot = self._take_screenshot('main_page')
+            #sync_send_photo(screenshot, "Главная страница Ozon открыта")
             
             return True
             
@@ -143,22 +149,32 @@ class OzonAuth:
             
             # Возможные селекторы кнопки входа
             selectors = [
+                'span.tsCompact300XSmall:has-text("Войти")',  # Новый селектор Ozon 2025
                 'text="Войти"',
                 'button:has-text("Войти")',
                 'a:has-text("Войти")',
-                '[data-test-id="header-login"]',
-                '.header-login',
-                'a[href*="login"]',
+                'span:has-text("Войти")',  # Любой span с текстом Войти
+                '[class*="Compact"]:has-text("Войти")',  # Любой класс содержащий Compact
             ]
             
-            for selector in selectors:
+            logger.info(f"Пробуем {len(selectors)} селекторов для кнопки входа")
+            
+            # Увеличиваем таймаут и пробуем все селекторы
+            for idx, selector in enumerate(selectors, 1):
                 try:
-                    element = self.page.wait_for_selector(selector, timeout=5000, state='visible')
+                    logger.info(f"Попытка {idx}/{len(selectors)}: {selector}")
+                    element = self.page.wait_for_selector(selector, timeout=8000, state='visible')
                     if element and element.is_visible():
-                        logger.info(f"Найдена кнопка входа: {selector}")
+                        logger.info(f"✅ Найдена кнопка входа: {selector}")
+                        
+                        # Делаем скриншот перед кликом
+                        screenshot = self._take_screenshot('before_login_click')
+                        if screenshot:
+                            sync_send_photo(screenshot, f"Найдена кнопка входа: {selector}")
                         
                         # Кликаем и ждем появления модального окна или iframe
                         element.click()
+                        logger.info(f"✅ Кликнули на кнопку входа: {selector}")
                         
                         # Ждем появления iframe или модального окна
                         time.sleep(3)
@@ -170,34 +186,50 @@ class OzonAuth:
                         # Ждем загрузки модального окна
                         try:
                             # Пробуем найти поле ввода (телефон или email)
-                            self.page.wait_for_selector('input[type="tel"], input[type="email"], input[type="text"]', 
+                            self.page.wait_for_selector('input[type="tel"]', 
                                                        timeout=5000, state='visible')
-                            logger.info("Модальное окно загружено, найдено поле ввода")
+                            logger.info("✅ Модальное окно загружено, найдено поле ввода")
                         except:
                             logger.warning("Поле ввода не найдено сразу, возможно в iframe")
-                        
-                        # Проверяем, что страница еще открыта
-                        if not self.page.is_closed():
-                            screenshot = self._take_screenshot('login_modal')
-                            sync_send_photo(screenshot, "Модальное окно входа открыто")
-                        
+ 
                         return True
                 except PlaywrightTimeout:
+                    logger.warning(f"⏱️ Таймаут для селектора {idx}/{len(selectors)}: {selector}")
                     continue
                 except Exception as e:
-                    logger.error(f"Ошибка при попытке селектора {selector}: {e}")
+                    logger.error(f"❌ Ошибка при попытке селектора {idx}/{len(selectors)} ({selector}): {e}")
                     continue
             
-            logger.warning("Кнопка входа не найдена")
+            # Если ни один селектор не сработал - делаем скриншот и логируем все элементы
+            logger.error("❌ Кнопка входа НЕ НАЙДЕНА ни одним селектором!")
+            screenshot = self._take_screenshot('login_button_not_found')
             
-            # Делаем скриншот текущего состояния
-            screenshot = self._take_screenshot('no_login_button')
-            sync_send_photo(screenshot, "⚠️ Кнопка входа не найдена")
+            # Логируем все элементы с текстом "Войти"
+            try:
+                logger.info("Ищем ВСЕ элементы с текстом 'Войти' на странице:")
+                all_login_elements = self.page.query_selector_all('*')
+                found_count = 0
+                for elem in all_login_elements:
+                    try:
+                        text = elem.inner_text() if elem.inner_text() else ""
+                        if 'войти' in text.lower() and len(text) < 50:
+                            tag = elem.evaluate("el => el.tagName")
+                            classes = elem.get_attribute('class') or 'no-class'
+                            logger.info(f"  Найден: <{tag} class='{classes[:80]}'>: '{text}'")
+                            found_count += 1
+                            if found_count >= 10:
+                                break
+                    except:
+                        pass
+                logger.info(f"Всего найдено элементов с 'Войти': {found_count}")
+            except Exception as e:
+                logger.error(f"Ошибка при поиске элементов: {e}")
             
-            # Возможно уже авторизованы или на странице входа
-            sync_send_message("⚠️ Не нашел кнопку 'Войти'.\n\n"
-                            "Возможно вы уже авторизованы или нужно нажать кнопку вручную.\n\n"
-                            "Отправьте любое сообщение для продолжения.")
+            if screenshot:
+                sync_send_photo(screenshot, "❌ Кнопка входа не найдена автоматически")
+            
+            logger.warning("Кнопка входа не найдена автоматически")
+            
             
             response = sync_wait_for_input("Нажмите 'Войти' вручную (если нужно) и отправьте сообщение", timeout=60)
             if response:
@@ -221,57 +253,71 @@ class OzonAuth:
         try:
             logger.info("Ищем кнопку 'Войти по почте' в iframe")
             
-            # Ждем появления iframe
-            time.sleep(2)
+            # Ждем появления модального окна
+            time.sleep(3)
             
-            # Ищем iframe с авторизацией
+            # Сначала ищем кнопку на ОСНОВНОЙ странице (модальное окно может быть БЕЗ iframe)
+            logger.info("Ищем кнопку 'Войти по почте' на основной странице")
+            
+            # Пробуем найти кнопку прямо на странице
+            page_selectors = [
+                'button:has-text("Войти по почте")',
+                'text="Войти по почте"',
+            ]
+            
+            for selector in page_selectors:
+                try:
+                    element = self.page.wait_for_selector(selector, timeout=2000, state='visible')
+                    if element and element.is_visible():
+                        text = element.inner_text().strip()
+                        if len(text) < 50 and 'Войти по почте' in text:
+                            logger.info(f"✅ Найдена кнопка на основной странице: {selector}")
+                            element.click()
+                            logger.info(f"✅ КЛИК ВЫПОЛНЕН по элементу на основной странице")
+                            time.sleep(3)
+                            screenshot = self._take_screenshot('email_login_selected')
+                            if screenshot:
+                                sync_send_photo(screenshot, "✅ Выбран вход по почте")
+                            return True
+                except:
+                    pass
+            
+            # Если не нашли на основной странице - ищем iframe (только ozonid-lite)
+            logger.info("Кнопка не найдена на основной странице, ищем iframe авторизации")
             auth_frame = None
             for frame in self.page.frames:
                 frame_url = frame.url
                 logger.info(f"Проверяем frame: {frame_url}")
                 
+                # ВАЖНО: ищем ТОЛЬКО специальный iframe авторизации (ozonid-lite)
                 if 'ozonid-lite' in frame_url or 'authFrame' in frame.name:
-                    logger.info(f"Найден iframe авторизации: {frame_url}")
+                    logger.info(f"✅ Найден iframe авторизации: {frame_url}")
                     auth_frame = frame
                     break
             
+            # Если iframe не найден - используем основную страницу
             if not auth_frame:
-                logger.warning("Iframe авторизации не найден, ищем в основной странице")
-                # Пробуем найти iframe по id или src
-                try:
-                    iframe_element = self.page.wait_for_selector('iframe#authFrame, iframe[src*="ozonid-lite"]', timeout=5000)
-                    if iframe_element:
-                        # Получаем frame из element handle
-                        auth_frame = iframe_element.content_frame()
-                        logger.info("Iframe найден через селектор")
-                except:
-                    pass
+                logger.warning("Специальный iframe не найден, используем основную страницу")
+                auth_frame = self.page.main_frame
             
-            if not auth_frame:
-                logger.error("Не удалось найти iframe авторизации")
-                screenshot = self._take_screenshot('no_auth_iframe')
-                sync_send_photo(screenshot, "❌ Iframe авторизации не найден")
-                return False
-            
-            # Ждем загрузки содержимого iframe
+            # Ждем загрузки
             time.sleep(2)
             
-            # Ищем кнопку "Войти по почте" - это div, а не button!
-            # Используем text= для ТОЧНОГО совпадения текста
+            # Ищем кнопку "Войти по почте" - это BUTTON с вложенным div!
+            # Структура: <button><div class="...tsBodyControl500Medium">Войти по почте</div></button>
+            # Используем ТОЛЬКО стабильные селекторы (без динамических классов)
             selectors = [
-                'text="Войти по почте"',  # Точное совпадение
-                'text=/^Войти по почте$/i',  # Regex для точного совпадения
-                '.ga5_3_7-a2:text("Войти по почте")',
-                'div.tsBodyControl500Medium:text("Войти по почте")',
-                '[class*="tsBodyControl"]:text("Войти по почте")',
-                'div:text-is("Войти по почте")',
+                'button:has-text("Войти по почте")',  # КНОПКА с текстом внутри
+                'button >> text="Войти по почте"',  # Кнопка содержащая текст
+                'text="Войти по почте"',  # Любой элемент с точным текстом
+                '[class*="tsBodyControl"]:has-text("Войти по почте")',  # div внутри кнопки
             ]
             
-            # Также попробуем через XPath для точного текста
+            # Также попробуем через XPath
             xpath_selectors = [
-                '//div[normalize-space(text())="Войти по почте"]',
-                '//div[contains(@class, "tsBodyControl") and normalize-space(text())="Войти по почте"]',
-                '//div[@class="ga5_3_7-a2 tsBodyControl500Medium" and normalize-space(text())="Войти по почте"]',
+                '//button[contains(., "Войти по почте")]',  # Кнопка содержащая текст
+                '//button//div[normalize-space(text())="Войти по почте"]',  # div внутри button
+                '//*[normalize-space(text())="Войти по почте"]',  # Любой элемент
             ]
             
             # Пробуем CSS селекторы
