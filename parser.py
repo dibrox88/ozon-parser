@@ -289,6 +289,21 @@ class OzonParser:
         """
         Извлечь товары из отправления.
         
+        Структура HTML (октябрь 2025):
+        <div data-widget="shipmentWidget">
+          <div>Статус отправления (первый дочерний div)</div>
+          <div>  ← Второй дочерний div = контейнер всех товаров
+            ВАРИАНТ А (с группами):
+              <div><span class="tsHeadline500Medium">10 товаров готовы</span></div>
+              <div>Блок с товарами</div>
+              <div><span class="tsHeadline500Medium">5 товаров получено</span></div>
+              <div>Блок с товарами</div>
+            
+            ВАРИАНТ Б (простой):
+              <div>Товар 1</div>
+              <div>Товар 2</div>
+        </div>
+        
         Args:
             shipment_element: Элемент div[data-widget="shipmentWidget"]
             fallback_status: Статус по умолчанию (если не найден специфичный)
@@ -297,43 +312,38 @@ class OzonParser:
             Список товаров с полями: quantity, price, name, color, status
         """
         items = []
-        seen_items = set()  # Для отслеживания дубликатов
+        seen_items = set()
         
         try:
-            # Ищем ВСЕ дочерние div внутри отправления (динамические классы lf3_15, lf6_15 и т.д.)
-            # Используем :scope > div чтобы взять только прямых потомков
-            all_divs = shipment_element.query_selector_all(':scope > div')
+            # Получаем все прямые дочерние div
+            all_children = shipment_element.query_selector_all(':scope > div')
+            logger.debug(f"Найдено прямых дочерних div: {len(all_children)}")
             
-            logger.debug(f"Найдено div-блоков в отправлении: {len(all_divs)}")
-            
-            if len(all_divs) == 0:
-                logger.warning("Не найдено div-блоков в отправлении")
+            if len(all_children) < 2:
+                logger.warning("Недостаточно дочерних блоков в shipmentWidget")
                 return items
             
-            # ПЕРВЫЙ DIV - проверяем статус "в пути"
-            first_div = all_divs[0] if len(all_divs) > 0 else None
-            global_status = None
-            
-            if first_div:
-                first_div_text = first_div.inner_text().lower()
-                if 'пути' in first_div_text or 'передаётся' in first_div_text or 'передается' in first_div_text:
-                    global_status = 'в пути'
-                    logger.info(f"✅ Найден глобальный статус 'в пути' - применяется ко всем товарам")
-            
-            # ВТОРОЙ и ПОСЛЕДУЮЩИЕ DIV - содержат товары
-            for idx, item_div in enumerate(all_divs[1:] if global_status else all_divs, start=2 if global_status else 1):
-                logger.debug(f"Обрабатываем div #{idx}")
+            # Все div начиная со 2-го (индекс 1) содержат товары (может быть несколько блоков)
+            # Обрабатываем каждый контейнер товаров
+            for container_idx in range(1, len(all_children)):
+                items_container = all_children[container_idx]
+                logger.debug(f"Обрабатываем контейнер #{container_idx}")
                 
-                # Определяем статус для этого товара
-                item_status = global_status if global_status else fallback_status
+                # Получаем все дочерние div из контейнера товаров
+                container_children = items_container.query_selector_all(':scope > div')
+                logger.debug(f"Найдено блоков в контейнере #{container_idx}: {len(container_children)}")
                 
-                # Если нет глобального статуса, ищем статус в первом div внутри блока товара
-                if not global_status:
-                    # Ищем span.tsHeadline550Medium (или tsHeadline500Medium как запасной вариант)
-                    status_span = item_div.query_selector('span.tsHeadline550Medium, span.tsHeadline500Medium')
-                    if status_span:
-                        status_text = status_span.inner_text().lower()
-                        logger.debug(f"Найден текст статуса товара: '{status_text}'")
+                i = 0
+                while i < len(container_children):
+                    current_div = container_children[i]
+                    
+                    # Проверяем, является ли этот div заголовком группы (содержит tsHeadline500Medium)
+                    group_status_span = current_div.query_selector('span.tsHeadline500Medium')
+                    
+                    if group_status_span:
+                        # Это заголовок группы товаров
+                        status_text = group_status_span.inner_text().lower()
+                        logger.debug(f"Найден групповой статус: '{status_text}'")
                         
                         # Определяем статус по ключевым словам
                         if 'отменён' in status_text or 'отменен' in status_text:
@@ -344,97 +354,108 @@ class OzonParser:
                             item_status = 'получен'
                         elif 'пути' in status_text or 'передаётся' in status_text or 'передается' in status_text:
                             item_status = 'в пути'
-                
-                logger.debug(f"Статус для товара в div #{idx}: {item_status}")
-                
-                # Ищем информацию о товаре во ВТОРОМ div внутри блока
-                # Структура: первый div = статус, второй div = товар
-                inner_divs = item_div.query_selector_all(':scope > div')
-                if len(inner_divs) < 2:
-                    logger.debug(f"Недостаточно вложенных div в блоке #{idx}, пропускаем")
-                    continue
-                
-                product_div = inner_divs[1]  # Второй div содержит информацию о товаре
-                
-                try:
-                    # Извлекаем наименование
-                    name_element = product_div.query_selector('span.tsCompact500Medium')
-                    if not name_element:
-                        logger.debug("Не найдено название товара, пропускаем")
-                        continue
-                    
-                    name = name_element.inner_text().strip()
-                    
-                    # Извлекаем цвет
-                    color = ""
-                    color_element = product_div.query_selector('span.tsCompact400Small')
-                    if color_element:
-                        color_text = color_element.inner_text().strip()
-                        if 'Цвет:' in color_text:
-                            color = self._extract_color_from_text(color_text)
-                            # Добавляем цвет к названию
-                            name = f"{name} {color}"
-                    
-                    # Извлекаем количество и цену
-                    quantity = None
-                    price = None
-                    
-                    # ПЕРВЫЙ ПРОХОД: Ищем span.tsBodyControl300XSmall с форматом "X x ЦЕНА ₽"
-                    price_spans = product_div.query_selector_all('span.tsBodyControl300XSmall')
-                    
-                    for span in price_spans:
-                        text = span.inner_text().strip()
-                        match = re.search(r'(\d+)\s*x\s*([\d\s\u202f\xa0]+)\s*₽', text)
-                        if match:
-                            quantity = int(match.group(1))
-                            # Убираем все виды пробелов из цены
-                            price_str = match.group(2).replace(' ', '').replace('\xa0', '').replace('\u202f', '')
-                            price = float(price_str)
-                            logger.debug(f"Найдено (множество): количество={quantity}, цена={price}")
+                        else:
+                            item_status = fallback_status
+                        
+                        logger.debug(f"Групповой статус: {item_status}")
+                        
+                        # Следующий div должен содержать товары этой группы
+                        i += 1
+                        if i >= len(container_children):
                             break
+                        
+                        products_block = container_children[i]
+                    else:
+                        # Это товар напрямую (простая структура без групп)
+                        products_block = current_div
+                        item_status = fallback_status
                     
-                    # ВТОРОЙ ПРОХОД: Если не нашли, ищем в span.tsHeadline400Small (количество = 1)
-                    if price is None:
-                        headline_span = product_div.query_selector('span.tsHeadline400Small')
-                        if headline_span:
-                            text = headline_span.inner_text().strip()
-                            match_single = re.search(r'([\d\s\u202f\xa0]+)\s*₽', text)
-                            if match_single:
-                                price_str = match_single.group(1).replace(' ', '').replace('\xa0', '').replace('\u202f', '')
-                                price = float(price_str)
-                                quantity = 1
-                                logger.debug(f"Найдено (одиночный в tsHeadline400Small): цена={price}")
+                    # Парсим товары внутри products_block
+                    # Ищем все div с названием товара (span.tsCompact500Medium)
+                    product_divs = products_block.query_selector_all('div')
                     
-                    if price is None:
-                        logger.debug(f"Не найдена цена для товара '{name}', пропускаем")
-                        continue
+                    for product_div in product_divs:
+                        # Проверяем наличие названия товара
+                        name_element = product_div.query_selector('span.tsCompact500Medium')
+                        if not name_element:
+                            continue
+                        
+                        try:
+                            name = name_element.inner_text().strip()
+                            
+                            # Извлекаем цвет
+                            color = ""
+                            color_element = product_div.query_selector('span.tsCompact400Small')
+                            if color_element:
+                                color_text = color_element.inner_text().strip()
+                                if 'Цвет:' in color_text:
+                                    color = self._extract_color_from_text(color_text)
+                                    name = f"{name} {color}"
+                            
+                            # Извлекаем количество и цену
+                            quantity = None
+                            price = None
+                            
+                            # Ищем span.tsBodyControl300XSmall с форматом "X x ЦЕНА ₽"
+                            price_spans = product_div.query_selector_all('span.tsBodyControl300XSmall')
+                            
+                            for span in price_spans:
+                                text = span.inner_text().strip()
+                                match = re.search(r'(\d+)\s*x\s*([\d\s\u202f\xa0]+)\s*₽', text)
+                                if match:
+                                    quantity = int(match.group(1))
+                                    price_str = match.group(2).replace(' ', '').replace('\xa0', '').replace('\u202f', '')
+                                    price = float(price_str)
+                                    logger.debug(f"Найдено: {name} x{quantity} @ {price}₽")
+                                    break
+                            
+                            # Если не нашли, ищем в span.tsHeadline400Small (количество = 1)
+                            if price is None:
+                                headline_span = product_div.query_selector('span.tsHeadline400Small')
+                                if headline_span:
+                                    text = headline_span.inner_text().strip()
+                                    match_single = re.search(r'([\d\s\u202f\xa0]+)\s*₽', text)
+                                    if match_single:
+                                        price_str = match_single.group(1).replace(' ', '').replace('\xa0', '').replace('\u202f', '')
+                                        price = float(price_str)
+                                        quantity = 1
+                                        logger.debug(f"Найдено: {name} x1 @ {price}₽")
+                            
+                            if price is None or quantity is None:
+                                logger.debug(f"Не найдена цена/количество для '{name}', пропускаем")
+                                continue
+                            
+                            # Проверяем дубликаты
+                            item_key = f"{name}_{quantity}_{price}"
+                            if item_key in seen_items:
+                                logger.debug(f"Пропускаем дубликат: {name}")
+                                continue
+                            
+                            seen_items.add(item_key)
+                            
+                            items.append({
+                                'quantity': quantity,
+                                'price': price,
+                                'name': name,
+                                'color': color,
+                                'status': item_status
+                            })
+                            
+                            logger.debug(f"✅ Товар добавлен: {name} x{quantity} @ {price}₽ [статус: {item_status}]")
+                            
+                        except Exception as e:
+                            logger.error(f"Ошибка при парсинге товара: {e}")
+                            continue
                     
-                    # Проверяем дубликаты по комбинации: название + количество + цена
-                    item_key = f"{name}_{quantity}_{price}"
-                    if item_key in seen_items:
-                        logger.debug(f"Пропускаем дубликат: {name} x{quantity} @ {price}₽")
-                        continue
-                    
-                    seen_items.add(item_key)
-                    
-                    items.append({
-                        'quantity': quantity,
-                        'price': price,
-                        'name': name,
-                        'color': color,
-                        'status': item_status  # Используем статус товара
-                    })
-                    
-                    logger.debug(f"Товар добавлен: {name} x{quantity} @ {price}₽ [статус: {item_status}]")
-                    
-                except Exception as e:
-                    logger.error(f"Ошибка при парсинге товара в div #{idx}: {e}")
-                    continue
+                    i += 1
             
+            logger.info(f"Всего товаров спарсено: {len(items)}")
             return items
             
         except Exception as e:
             logger.error(f"Ошибка при парсинге товаров отправления: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return []
     
     def navigate_to_orders(self) -> bool:
