@@ -1,0 +1,125 @@
+#cloud-config
+# Cloud-init конфигурация для автоматической настройки сервера Timeweb
+# Используется при первом запуске сервера
+
+# Настройка пользователей
+users:
+  - name: ozon
+    groups: sudo
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    # ВАЖНО: Замените на ваш публичный SSH ключ!
+    # Сгенерируйте на Windows: ssh-keygen -t ed25519
+    # Ключ находится в: C:\Users\фф\.ssh\id_ed25519.pub
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... your_email@example.com
+    # Если у вас уже есть ключ, скопируйте его сюда полностью
+
+# Настройка hostname
+hostname: ozon-parser
+fqdn: ozon-parser.local
+
+# Обновление пакетов при первом запуске
+package_update: true
+package_upgrade: true
+
+# Установка необходимых пакетов
+packages:
+  # Базовые утилиты
+  - git
+  - curl
+  - wget
+  - htop
+  - vim
+  - nano
+  - unzip
+  # Python
+  - python3
+  - python3-pip
+  - python3-venv
+  - python3-dev
+  # Системные библиотеки для Playwright
+  - libnss3
+  - libnspr4
+  - libatk1.0-0
+  - libatk-bridge2.0-0
+  - libcups2
+  - libdrm2
+  - libdbus-1-3
+  - libxkbcommon0
+  - libxcomposite1
+  - libxdamage1
+  - libxfixes3
+  - libxrandr2
+  - libgbm1
+  - libasound2
+  - libpango-1.0-0
+  - libcairo2
+  # Дополнительные инструменты
+  - nginx
+  - ufw
+  - certbot
+  - python3-certbot-nginx
+
+# Настройка timezone
+timezone: Europe/Moscow
+
+# Выполнение команд после установки пакетов
+runcmd:
+  # Настройка firewall
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow ssh
+  - ufw allow 8000/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - echo "y" | ufw enable
+  
+  # Создание директории проекта
+  - mkdir -p /home/ozon/ozon_parser
+  - chown -R ozon:ozon /home/ozon/ozon_parser
+  
+  # Создание рабочих директорий
+  - mkdir -p /home/ozon/ozon_parser/logs
+  - mkdir -p /home/ozon/ozon_parser/screenshots
+  - mkdir -p /home/ozon/ozon_parser/browser_state
+  - chown -R ozon:ozon /home/ozon/ozon_parser
+  
+  # Настройка swap (для стабильности при 2-4 ГБ RAM)
+  - fallocate -l 2G /swapfile
+  - chmod 600 /swapfile
+  - mkswap /swapfile
+  - swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  
+  # Настройка логирования
+  - touch /var/log/cloud-init-output.log
+  - chmod 644 /var/log/cloud-init-output.log
+
+# Финальное сообщение
+final_message: |
+  ========================================
+  🚀 Сервер Ozon Parser готов!
+  ========================================
+  
+  ✅ Пользователь 'ozon' создан
+  ✅ Пакеты установлены
+  ✅ Firewall настроен
+  ✅ Timezone: Europe/Moscow
+  ✅ Swap: 2 ГБ
+  
+  📋 Следующие шаги:
+  
+  1. Подключитесь по SSH:
+     ssh ozon@YOUR_SERVER_IP
+  
+  2. Скопируйте файлы проекта:
+     scp -r * ozon@YOUR_SERVER_IP:~/ozon_parser/
+  
+  3. Запустите установку:
+     cd ~/ozon_parser
+     bash deploy.sh
+  
+  📚 Документация: QUICKSTART_DEPLOY.md
+  
+  ========================================
