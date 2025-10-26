@@ -1,0 +1,25 @@
+# Production dependencies for Ozon Parser
+# Версия для развёртывания на сервере Timeweb
+
+# Core dependencies
+playwright==1.48.0
+python-telegram-bot==21.7
+loguru==0.7.3
+python-dotenv==1.0.1
+
+# Google Sheets integration
+gspread==6.1.4
+google-auth==2.37.0
+google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0
+
+# API Server
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+pydantic==2.10.2
+
+# Scheduler (optional, если используем APScheduler вместо cron)
+apscheduler==3.10.4
+
+# Utilities
+pytz==2024.2

@@ -39,3 +39,7 @@ google_credentials.json
 # Product mappings cache
 product_mappings.json
 
+# Deployment (server-specific files)
+*.tar.gz
+*.backup
+
