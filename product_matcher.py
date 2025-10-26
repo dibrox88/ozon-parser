@@ -500,12 +500,12 @@ def match_product_interactive(
 ❓ <b>Предлагаем тип по умолчанию:</b> <code>{matcher.DEFAULT_TYPE}</code>
 
 💡 <b>Варианты ответа:</b>
-1. Отправьте <code>OK</code> - использовать тип "{matcher.DEFAULT_TYPE}"
-2. Отправьте <code>Название | Тип</code> - ввести вручную
-3. Отправьте <code>Р</code> - разбить товар на компоненты"""
+1. Отправьте <code>Р</code> - использовать тип "расходники"
+2. Отправьте <code>В</code> - ввести вручную (формат: Название | Тип)
+3. Отправьте <code>К</code> - разбить товар на компоненты"""
         
         if order_number and excluded_manager:
-            message += f"\n4. Отправьте <code>EXCLUDE</code> - исключить весь заказ {order_number}"
+            message += f"\n4. Отправьте <code>И</code> - исключить весь заказ {order_number}"
         
         message += "\n\n⏳ Ожидаю ваш ответ..."
         
@@ -513,7 +513,7 @@ def match_product_interactive(
         
         from notifier import sync_wait_for_input
         response = sync_wait_for_input(
-            "Отправьте OK, EXCLUDE или введите 'Название | Тип':",
+            "Отправьте Р, В, К или И:",
             timeout=300
         )
         
@@ -522,12 +522,18 @@ def match_product_interactive(
             mapped_name = name
             mapped_type = matcher.DEFAULT_TYPE
         elif response.upper() == 'Р':
-            # Разбивка товара
+            # Использовать тип "расходники"
+            logger.info(f"✅ Пользователь выбрал тип 'расходники' для: {name}")
+            mapped_name = name
+            mapped_type = "расходники"
+        elif response.upper() == 'К':
+            # Разбивка товара на компоненты
             logger.info(f"🔧 Пользователь выбрал разбивку для: {name}")
             # Вернем специальный маркер - обработка будет в enrich_orders_with_mapping
             return "SPLIT", None
-        elif response.upper() == 'EXCLUDE':
+        elif response.upper() == 'И':
             if order_number and excluded_manager:
+                # Исключаем весь заказ
                 excluded_manager.add_excluded(order_number)
                 sync_send_message(f"🚫 <b>Заказ {order_number} исключён!</b>\n\nВсе товары из этого заказа будут пропущены.")
                 logger.info(f"🚫 Заказ {order_number} исключён пользователем")
@@ -536,15 +542,20 @@ def match_product_interactive(
                 logger.warning("⚠️ Невозможно исключить заказ - нет номера заказа или менеджера")
                 mapped_name = name
                 mapped_type = matcher.DEFAULT_TYPE
-        elif response.upper() == 'OK':
-            logger.info(f"✅ Пользователь подтвердил тип по умолчанию для: {name}")
-            mapped_name = name
-            mapped_type = matcher.DEFAULT_TYPE
-        elif '|' in response:
-            parts = response.split('|', 1)
-            mapped_name = parts[0].strip()
-            mapped_type = parts[1].strip()
-            logger.info(f"✅ Пользователь ввёл вручную: {mapped_name} | {mapped_type}")
+        elif response.upper() == 'В':
+            # Ввод вручную
+            sync_send_message("📝 <b>Введите данные в формате:</b> <code>Название | Тип</code>\n\n⏳ Ожидаю ваш ответ...")
+            manual_response = sync_wait_for_input("Название | Тип:", timeout=120)
+            
+            if not manual_response or '|' not in manual_response:
+                logger.warning(f"⚠️ Некорректный формат ввода - используем тип по умолчанию для: {name}")
+                mapped_name = name
+                mapped_type = matcher.DEFAULT_TYPE
+            else:
+                parts = manual_response.split('|', 1)
+                mapped_name = parts[0].strip()
+                mapped_type = parts[1].strip()
+                logger.info(f"✅ Пользователь ввёл вручную: {mapped_name} | {mapped_type}")
         else:
             logger.warning(f"⚠️ Некорректный ответ - используем тип по умолчанию для: {name}")
             mapped_name = name

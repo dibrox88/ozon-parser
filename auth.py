@@ -170,7 +170,7 @@ class OzonAuth:
                         # Делаем скриншот перед кликом
                         screenshot = self._take_screenshot('before_login_click')
                         if screenshot:
-                            sync_send_photo(screenshot, f"Найдена кнопка входа: {selector}")
+                            pass  # sync_send_photo(screenshot, f"Найдена кнопка входа: {selector}")
                         
                         # Кликаем и ждем появления модального окна или iframe
                         element.click()

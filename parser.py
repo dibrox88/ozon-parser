@@ -117,7 +117,7 @@ class OzonParser:
         """
         Извлечь общую сумму заказа.
         
-        Ищем span с текстом "Товары", затем в родительском div ищем сумму с ₽.
+        Ищем span с текстом "Товары", поднимаемся на 4 родительских div, затем ищем span с ₽.
         
         Returns:
             Сумма заказа как число или None
@@ -130,21 +130,39 @@ class OzonParser:
                 logger.warning("Не найден элемент 'Товары'")
                 return None
             
-            # Получаем родительский контейнер (без использования динамических классов)
-            # Ищем ближайший div-контейнер с ценой
-            parent = товары_элемент.evaluate('el => el.closest("div")')
+            # Поднимаемся на 4 уровня вверх к родительскому div
+            parent_element = товары_элемент.evaluate('''
+                el => {
+                    let parent = el;
+                    for (let i = 0; i < 4; i++) {
+                        parent = parent.parentElement;
+                        if (!parent) return null;
+                    }
+                    return parent;
+                }
+            ''')
             
-            if not parent:
-                logger.warning("Не найден родительский контейнер для суммы")
+            if not parent_element:
+                logger.warning("Не удалось подняться на 4 уровня от 'Товары'")
                 return None
             
-            # Ищем span с ₽ внутри родительского контейнера (без динамических классов)
-            # Используем XPath: находим "Товары" и поднимаемся к родительскому div
-            parent_element = self.page.query_selector(f'xpath=//*[contains(text(), "Товары")]/ancestor::div[.//span[contains(text(), "₽")]]')
+            # Создаем ElementHandle из результата evaluate
+            parent_handle = self.page.evaluate_handle('''
+                () => {
+                    const товары = document.querySelector('span:has-text("Товары")');
+                    if (!товары) return null;
+                    let parent = товары;
+                    for (let i = 0; i < 4; i++) {
+                        parent = parent.parentElement;
+                        if (!parent) return null;
+                    }
+                    return parent;
+                }
+            ''').as_element()
             
-            if parent_element:
-                # Ищем все span внутри
-                price_elements = parent_element.query_selector_all('span')
+            if parent_handle:
+                # Ищем все span внутри родительского контейнера
+                price_elements = parent_handle.query_selector_all('span')
                 
                 for price_el in price_elements:
                     text = price_el.inner_text().strip()
