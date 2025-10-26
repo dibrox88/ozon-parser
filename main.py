@@ -229,7 +229,32 @@ def main():
                         all_orders_data = valid_orders
                     
                     logger.info(f"✅ Заказов для обработки: {len(all_orders_data)}")
-                    sync_send_message(f"✅ <b>Парсинг завершен!</b>\n\nОбработано: {len(all_orders_data)}/{len(orders)} заказов")
+                    
+                    # Формируем детальный отчет о спарсенных заказах
+                    summary_message = f"✅ <b>Парсинг завершен!</b>\n\n"
+                    summary_message += f"📊 <b>Обработано:</b> {len(all_orders_data)}/{len(orders)} заказов\n\n"
+                    
+                    if all_orders_data:
+                        total_items = sum(order.get('items_count', 0) for order in all_orders_data)
+                        total_amount = sum(order.get('total_amount', 0) for order in all_orders_data)
+                        
+                        summary_message += f"📦 <b>Всего товаров:</b> {total_items} шт\n"
+                        summary_message += f"💰 <b>Общая сумма:</b> {total_amount:,.2f} ₽\n\n"
+                        summary_message += f"<b>Детали заказов:</b>\n"
+                        
+                        for idx, order in enumerate(all_orders_data[:10], 1):  # Показываем первые 10
+                            order_num = order.get('order_number', '?')
+                            order_date = order.get('date', '?')
+                            order_items = order.get('items_count', 0)
+                            order_sum = order.get('total_amount', 0)
+                            
+                            summary_message += f"\n{idx}. <code>{order_num}</code>"
+                            summary_message += f"\n   📅 {order_date} | 📦 {order_items} шт | 💰 {order_sum:,.0f} ₽"
+                        
+                        if len(all_orders_data) > 10:
+                            summary_message += f"\n\n... и ещё {len(all_orders_data) - 10} заказов"
+                    
+                    sync_send_message(summary_message)
                     
                     # Сопоставление товаров с каталогом из Google Sheets
                     if all_orders_data and Config.GOOGLE_SHEETS_URL and Config.GOOGLE_CREDENTIALS_FILE:
@@ -289,7 +314,27 @@ def main():
                         try:
                             json_file = export_orders(all_orders_data)
                             logger.info(f"📁 Данные сохранены в: {json_file}")
-                            sync_send_message(f"📁 <b>Данные экспортированы</b>\n\nФайл: {json_file}")
+                            
+                            # Формируем итоговый отчет
+                            export_message = f"📁 <b>Данные экспортированы</b>\n\n"
+                            export_message += f"📄 Файл: <code>{json_file}</code>\n\n"
+                            
+                            # Статистика по типам товаров (если есть маппинг)
+                            types_stats = {}
+                            for order in all_orders_data:
+                                for item in order.get('items', []):
+                                    item_type = item.get('type', 'Не указан')
+                                    if item_type not in types_stats:
+                                        types_stats[item_type] = {'count': 0, 'sum': 0}
+                                    types_stats[item_type]['count'] += item.get('quantity', 0)
+                                    types_stats[item_type]['sum'] += item.get('quantity', 0) * item.get('price', 0)
+                            
+                            if types_stats:
+                                export_message += "<b>📊 Статистика по типам:</b>\n"
+                                for item_type, stats in sorted(types_stats.items()):
+                                    export_message += f"\n• {item_type}: {stats['count']} шт ({stats['sum']:,.0f} ₽)"
+                            
+                            sync_send_message(export_message)
                             
                             # Синхронизация с Google Sheets
                             try:

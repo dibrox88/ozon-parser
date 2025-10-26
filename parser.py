@@ -123,65 +123,57 @@ class OzonParser:
             Сумма заказа как число или None
         """
         try:
-            # Ищем элемент с текстом "Товары"
-            товары_элемент = self.page.query_selector('span:has-text("Товары")')
+            # Ищем все span с классом tsBody500Medium
+            body_spans = self.page.query_selector_all('span.tsBody500Medium')
             
-            if not товары_элемент:
-                logger.warning("Не найден элемент 'Товары'")
-                return None
-            
-            # Поднимаемся на 4 уровня вверх к родительскому div
-            parent_element = товары_элемент.evaluate('''
-                el => {
-                    let parent = el;
-                    for (let i = 0; i < 4; i++) {
-                        parent = parent.parentElement;
-                        if (!parent) return null;
-                    }
-                    return parent;
-                }
-            ''')
-            
-            if not parent_element:
-                logger.warning("Не удалось подняться на 4 уровня от 'Товары'")
-                return None
-            
-            # Создаем ElementHandle из результата evaluate
-            parent_handle = self.page.evaluate_handle('''
-                () => {
-                    const товары = document.querySelector('span:has-text("Товары")');
-                    if (!товары) return null;
-                    let parent = товары;
-                    for (let i = 0; i < 4; i++) {
-                        parent = parent.parentElement;
-                        if (!parent) return null;
-                    }
-                    return parent;
-                }
-            ''').as_element()
-            
-            if parent_handle:
-                # Ищем все span внутри родительского контейнера
-                price_elements = parent_handle.query_selector_all('span')
-                
-                for price_el in price_elements:
-                    text = price_el.inner_text().strip()
-                    if '₽' in text:
-                        # Извлекаем число, убирая все виды пробелов
-                        price_str = text.replace('₽', '').replace(' ', '').replace('\xa0', '').replace('\u202f', '').strip()
-                        try:
-                            price = float(price_str)
-                            logger.info(f"Найдена сумма заказа: {price} ₽")
-                            return price
-                        except ValueError:
-                            logger.debug(f"Не удалось преобразовать в число: {price_str}")
-                            continue
+            for span in body_spans:
+                text = span.inner_text().strip()
+                if text == 'Товары':
+                    logger.debug("Найден span с текстом 'Товары'")
+                    
+                    # Поднимаемся на 4 уровня вверх к родительскому контейнеру
+                    parent_element = span.evaluate_handle('''
+                        el => {
+                            let parent = el;
+                            for (let i = 0; i < 4; i++) {
+                                parent = parent.parentElement;
+                                if (!parent) return null;
+                            }
+                            return parent;
+                        }
+                    ''').as_element()
+                    
+                    if not parent_element:
+                        logger.warning("Не удалось подняться на 4 уровня от 'Товары'")
+                        continue
+                    
+                    # Ищем span.tsHeadline400Small внутри родительского элемента
+                    price_span = parent_element.query_selector('span.tsHeadline400Small')
+                    
+                    if price_span:
+                        price_text = price_span.inner_text().strip()
+                        logger.debug(f"Найден текст цены: {price_text}")
+                        
+                        if '₽' in price_text:
+                            # Извлекаем число, убирая все виды пробелов
+                            price_str = price_text.replace('₽', '').replace(' ', '').replace('\xa0', '').replace('\u202f', '').strip()
+                            try:
+                                price = float(price_str)
+                                logger.info(f"Найдена сумма заказа: {price} ₽")
+                                return price
+                            except ValueError:
+                                logger.debug(f"Не удалось преобразовать в число: {price_str}")
+                                continue
+                    else:
+                        logger.debug("Не найден span.tsHeadline400Small в родительском контейнере")
             
             logger.warning("Не удалось найти сумму заказа")
             return None
             
         except Exception as e:
             logger.error(f"Ошибка при парсинге суммы заказа: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
     
     def _determine_shipment_status(self, shipment_element: ElementHandle) -> str:
@@ -443,13 +435,13 @@ class OzonParser:
                                 logger.debug(f"Не найдена цена/количество для '{name}', пропускаем")
                                 continue
                             
-                            # Проверяем дубликаты
-                            item_key = f"{name}_{quantity}_{price}"
-                            if item_key in seen_items:
-                                logger.debug(f"Пропускаем дубликат: {name}")
-                                continue
+                            # # Проверяем дубликаты
+                            # item_key = f"{name}_{quantity}_{price}"
+                            # if item_key in seen_items:
+                            #     logger.debug(f"Пропускаем дубликат: {name}")
+                            #     continue
                             
-                            seen_items.add(item_key)
+                            # seen_items.add(item_key)
                             
                             items.append({
                                 'quantity': quantity,
