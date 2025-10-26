@@ -12,7 +12,7 @@ users:
     # Сгенерируйте на Windows: ssh-keygen -t ed25519
     # Ключ находится в: C:\Users\фф\.ssh\id_ed25519.pub
     ssh_authorized_keys:
-      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... your_email@example.com
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILHFYSOSrkDZ9b1RFnLn32y/cnMrIFtcXt8N6o0Obc2M gamerlab@mail.ru
     # Если у вас уже есть ключ, скопируйте его сюда полностью
 
 # Настройка hostname

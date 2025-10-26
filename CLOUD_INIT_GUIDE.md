@@ -29,7 +29,7 @@ Cloud-init автоматизирует первоначальную настр�
 
 ```powershell
 # В PowerShell
-ssh-keygen -t ed25519 -C "your_email@example.com"
+ssh-keygen -t ed25519 -C "gamerlab@mail.ru"
 
 # Нажмите Enter 3 раза (сохранить в дефолтное место, без пароля)
 ```
