@@ -10,7 +10,7 @@ class StealthHelper:
     """Помощник для скрытной автоматизации."""
     
     @staticmethod
-    def human_delay(min_sec: float = 1.0, max_sec: float = 3.0):
+    def human_delay(min_sec: float = 2.0, max_sec: float = 5.0):
         """
         Случайная задержка, имитирующая человека.
         

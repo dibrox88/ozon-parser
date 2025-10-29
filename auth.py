@@ -123,11 +123,28 @@ class OzonAuth:
             
             # Ждем загрузки страницы
             self.page.wait_for_load_state('networkidle', timeout=Config.DEFAULT_TIMEOUT)
-            StealthHelper.human_delay(2, 4)  # Имитация человека
+            StealthHelper.human_delay(3, 6)  # Увеличенная задержка - имитация человека
             
-            # Делаем скриншот
-            #screenshot = self._take_screenshot('main_page')
-            #sync_send_photo(screenshot, "Главная страница Ozon открыта")
+            # ДИАГНОСТИКА: Проверяем что загрузилось
+            current_url = self.page.url
+            page_title = self.page.title()
+            page_content = self.page.content()[:500]  # Первые 500 символов
+            
+            logger.info(f"📍 Текущий URL: {current_url}")
+            logger.info(f"📄 Заголовок страницы: {page_title}")
+            logger.info(f"📝 Начало HTML: {page_content}")
+            
+            # Проверяем на признаки блокировки
+            if "captcha" in current_url.lower() or "captcha" in page_content.lower():
+                logger.error("❌ ОБНАРУЖЕНА КАПЧА!")
+            elif "access" in current_url.lower() or "denied" in page_content.lower():
+                logger.error("❌ ДОСТУП ЗАПРЕЩЕН!")
+            elif "cloudflare" in page_content.lower():
+                logger.error("❌ CLOUDFLARE ЗАЩИТА!")
+            
+            # Делаем скриншот для диагностики
+            screenshot = self._take_screenshot('main_page_diagnostic')
+            sync_send_photo(screenshot, f"Диагностика загрузки\nURL: {current_url}\nTitle: {page_title}")
             
             return True
             
@@ -1260,15 +1277,35 @@ class OzonAuth:
             logger.info("Проверяем авторизацию")
             time.sleep(3)
             
+            # Проверяем URL
+            current_url = self.page.url
+            logger.info(f"📍 Текущий URL: {current_url}")
+            
+            # Если мы на странице заказов - 100% авторизованы
+            if '/my/orderlist' in current_url or '/my/main' in current_url:
+                logger.success("✅ Мы на странице 'Мои заказы' - авторизация успешна!")
+                screenshot = self._take_screenshot('after_login')
+                sync_send_photo(screenshot, "✅ Авторизация успешна! Мы на странице заказов")
+                return True
+            
             # Делаем скриншот
             screenshot = self._take_screenshot('after_login')
+            
+            # Проверяем на блокировку
+            page_title = self.page.title()
+            if "Доступ ограничен" in page_title or "Access Denied" in page_title:
+                logger.error("❌ БЛОКИРОВКА: Доступ ограничен!")
+                sync_send_photo(screenshot, f"❌ Блокировка Ozon: {page_title}")
+                return False
             
             # Сначала проверяем признаки НЕавторизации
             not_auth_indicators = [
                 'text="Вы не авторизованы"',
                 '[data-widget="myGuest"]',
                 'text="необходимо войти"',
-                '[data-widget="loginButton"]'
+                '[data-widget="loginButton"]',
+                'button:has-text("Войти")',
+                'a:has-text("Войти")'
             ]
             
             for indicator in not_auth_indicators:
@@ -1277,7 +1314,7 @@ class OzonAuth:
                     if element and element.is_visible():
                         logger.warning(f"❌ Обнаружен индикатор неавторизации: {indicator}")
                         logger.warning(f"Текст элемента: {element.inner_text()[:100]}")
-                        sync_send_photo(screenshot, "❌ Авторизация не выполнена - обнаружено сообщение 'Вы не авторизованы'")
+                        sync_send_photo(screenshot, "❌ Авторизация не выполнена")
                         return False
                 except:
                     pass
@@ -1289,34 +1326,24 @@ class OzonAuth:
                 '[data-test-id="user-menu"]',
                 'a[href*="/my/"]',
                 'div[class*="userAvatar"]',
-                '[data-widget="profileMenu"]'
+                '[data-widget="profileMenu"]',
+                'text="Мой профиль"',
+                'button:has-text("Профиль")'
             ]
             
             for indicator in success_indicators:
                 try:
                     element = self.page.query_selector(indicator)
                     if element and element.is_visible():
-                        logger.info(f"✅ Авторизация успешна! Найден индикатор: {indicator}")
+                        logger.success(f"✅ Авторизация успешна! Найден индикатор: {indicator}")
                         sync_send_photo(screenshot, "✅ Авторизация успешна!")
                         return True
                 except:
                     pass
             
-            # Если не нашли ни одного индикатора, отправляем скриншот для проверки
-            logger.warning("⚠️ Не удалось определить статус авторизации автоматически")
-            sync_send_photo(screenshot, "⚠️ Результат авторизации не определен (проверьте вручную)")
-            
-            # Спрашиваем пользователя
-            response = sync_wait_for_input(
-                "Авторизация прошла успешно? Введите 'YES' если да, или 'NO' если нет:",
-                timeout=60
-            )
-            
-            if response and response.upper() in ['YES', 'ДА', 'Y']:
-                logger.info("Пользователь подтвердил успешную авторизацию")
-                return True
-            
-            logger.warning("Авторизация не подтверждена")
+            # Если не нашли ни одного индикатора - считаем что НЕ авторизованы
+            logger.warning("⚠️ Индикаторы авторизации не найдены - считаем что не авторизованы")
+            sync_send_photo(screenshot, "⚠️ Не удалось определить авторизацию")
             return False
             
         except Exception as e:
