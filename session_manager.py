@@ -1,5 +1,6 @@
 """Модуль управления сессиями браузера."""
 import os
+import json
 from pathlib import Path
 from typing import Optional
 from playwright.sync_api import Browser, BrowserContext
@@ -14,10 +15,67 @@ class SessionManager:
         """Инициализация."""
         self.state_dir = Path(Config.BROWSER_STATE_DIR)
         self.state_file = self.state_dir / "ozon_session.json"
+        self.cookies_file = Path("ozon_cookies.json")  # Новый: файл с экспортированными cookies
         
         # Создаем директорию если её нет
         self.state_dir.mkdir(exist_ok=True)
         logger.info(f"Директория сессий: {self.state_dir.absolute()}")
+    
+    def cookies_exist(self) -> bool:
+        """
+        Проверить наличие экспортированных cookies.
+        
+        Returns:
+            True если cookies файл существует
+        """
+        exists = self.cookies_file.exists()
+        if exists:
+            logger.info(f"✅ Найдены экспортированные cookies: {self.cookies_file}")
+        return exists
+    
+    def load_cookies_to_context(self, context: BrowserContext) -> bool:
+        """
+        Загрузить cookies из JSON файла в контекст браузера.
+        
+        Args:
+            context: Контекст браузера Playwright
+            
+        Returns:
+            True если cookies успешно загружены
+        """
+        try:
+            if not self.cookies_exist():
+                return False
+            
+            logger.info("🍪 Загружаем экспортированные cookies...")
+            
+            with open(self.cookies_file, 'r', encoding='utf-8') as f:
+                cookies = json.load(f)
+            
+            if not cookies:
+                logger.error("❌ Cookies файл пустой")
+                return False
+            
+            # Добавляем cookies в контекст
+            context.add_cookies(cookies)
+            
+            logger.success(f"✅ Загружено {len(cookies)} cookies")
+            
+            # Проверяем важные cookies
+            important = ['__Secure-access-token', '__Secure-refresh-token', 'xcid']
+            cookie_names = [c['name'] for c in cookies]
+            found_important = [name for name in important if name in cookie_names]
+            
+            if found_important:
+                logger.success(f"✅ Найдены токены авторизации: {', '.join(found_important)}")
+                return True
+            else:
+                logger.warning("⚠️ Важные cookies не найдены, авторизация может не работать")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка загрузки cookies: {e}")
+            return False
     
     def session_exists(self) -> bool:
         """

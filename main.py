@@ -34,7 +34,7 @@ from session_manager import SessionManager
 
 def setup_browser_context(browser: Browser) -> BrowserContext:
     """
-    Настройка контекста браузера для обхода защиты.
+    Настройка контекста браузера (простая версия как в export_cookies.py).
     
     Args:
         browser: Браузер Playwright
@@ -44,97 +44,10 @@ def setup_browser_context(browser: Browser) -> BrowserContext:
     """
     context = browser.new_context(
         viewport={'width': 1920, 'height': 1080},
-        user_agent=Config.USER_AGENT,
+        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
         locale='ru-RU',
         timezone_id='Europe/Moscow',
-        geolocation={'longitude': 37.6173, 'latitude': 55.7558},  # Москва
-        permissions=['geolocation'],
-        # Дополнительные параметры для stealth
-        extra_http_headers={
-            'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-        }
     )
-    
-    # Добавляем инициализационный скрипт для подмены navigator свойств
-    context.add_init_script("""
-        // Подменяем webdriver
-        Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined
-        });
-        
-        // Подменяем automation
-        delete navigator.__proto__.webdriver;
-        
-        // Подменяем plugins
-        Object.defineProperty(navigator, 'plugins', {
-            get: () => [
-                {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format'},
-                {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: ''},
-                {name: 'Native Client', filename: 'internal-nacl-plugin', description: ''}
-            ]
-        });
-        
-        // Подменяем languages
-        Object.defineProperty(navigator, 'languages', {
-            get: () => ['ru-RU', 'ru', 'en-US', 'en']
-        });
-        
-        // Chrome property
-        window.chrome = {
-            runtime: {},
-            loadTimes: function() {},
-            csi: function() {},
-            app: {}
-        };
-        
-        // Permissions
-        const originalQuery = window.navigator.permissions.query;
-        window.navigator.permissions.query = (parameters) => (
-            parameters.name === 'notifications' ?
-                Promise.resolve({ state: Notification.permission }) :
-                originalQuery(parameters)
-        );
-        
-        // Убираем automation флаги
-        const originalAddEventListener = EventTarget.prototype.addEventListener;
-        EventTarget.prototype.addEventListener = function(type, listener, options) {
-            if (type === 'beforeunload') {
-                return;
-            }
-            return originalAddEventListener.call(this, type, listener, options);
-        };
-        
-        // Переопределяем toString для функций
-        const originalToString = Function.prototype.toString;
-        Function.prototype.toString = function() {
-            if (this === window.navigator.permissions.query) {
-                return 'function query() { [native code] }';
-            }
-            return originalToString.call(this);
-        };
-        
-        // Добавляем случайные шумы в canvas
-        const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
-        CanvasRenderingContext2D.prototype.getImageData = function() {
-            const imageData = originalGetImageData.apply(this, arguments);
-            for (let i = 0; i < imageData.data.length; i += 4) {
-                imageData.data[i] += Math.random() * 0.1 - 0.05;
-            }
-            return imageData;
-        };
-        
-        // WebGL fingerprint protection
-        const getParameter = WebGLRenderingContext.prototype.getParameter;
-        WebGLRenderingContext.prototype.getParameter = function(parameter) {
-            if (parameter === 37445) {
-                return 'Intel Inc.';
-            }
-            if (parameter === 37446) {
-                return 'Intel Iris OpenGL Engine';
-            }
-            return getParameter.call(this, parameter);
-        };
-    """)
     
     return context
 
@@ -156,33 +69,68 @@ def main():
         with sync_playwright() as p:
             logger.info("Запуск браузера...")
             
-            # Запускаем Chromium с аргументами для обхода защиты
+            # Простая конфигурация браузера (как в export_cookies.py - без блокировки!)
+            logger.info("🌐 Запускаем браузер с минимальными настройками...")
             browser = p.chromium.launch(
                 headless=Config.HEADLESS,
-                slow_mo=50,  # Замедляем действия для имитации человека
                 args=[
+                    '--start-maximized',
                     '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage',
-                    '--disable-web-security',
-                    '--disable-features=IsolateOrigins,site-per-process,VizDisplayCompositor',
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-infobars',
-                    '--window-position=0,0',
-                    '--ignore-certificate-errors',
-                    '--ignore-certificate-errors-spki-list',
-                    '--disable-gpu',
-                    '--disable-software-rasterizer',
-                    '--disable-extensions',
                 ]
             )
             
-            # Пробуем загрузить сохраненную сессию
+            # Пробуем загрузить сохраненную сессию или экспортированные cookies
             context = None
             page = None
             needs_auth = True
             
-            if session_manager.session_exists():
+            # ПРИОРИТЕТ 1: Проверяем наличие экспортированных cookies (обходит блокировку!)
+            if session_manager.cookies_exist():
+                logger.info("🍪 Найдены экспортированные cookies! Используем их для обхода блокировки...")
+                sync_send_message("🍪 Используем cookies из обычного браузера...")
+                
+                # Создаем новый контекст
+                context = setup_browser_context(browser)
+                
+                # Загружаем cookies
+                if session_manager.load_cookies_to_context(context):
+                    page = context.new_page()
+                    page.set_default_timeout(Config.DEFAULT_TIMEOUT)
+                    page.set_default_navigation_timeout(Config.NAVIGATION_TIMEOUT)
+                    
+                    # Не применяем stealth - простая конфигурация работает лучше!
+                    
+                    try:
+                        # Пробуем открыть страницу заказов
+                        logger.info("📍 Проверяем авторизацию с cookies...")
+                        page.goto(Config.OZON_ORDERS_URL, timeout=30000)
+                        page.wait_for_load_state('networkidle', timeout=15000)
+                        
+                        # Проверяем, авторизованы ли мы
+                        auth = OzonAuth(page)
+                        if auth.verify_login():
+                            logger.success("✅ Авторизация с cookies успешна! Блокировка обойдена!")
+                            sync_send_message("✅ Вход выполнен через cookies! Парсинг начинается...")
+                            needs_auth = False
+                        else:
+                            logger.warning("⚠️ Cookies устарели, требуется повторный экспорт")
+                            sync_send_message("⚠️ Cookies устарели. Экспортируйте новые: python export_cookies.py")
+                            context.close()
+                            context = None
+                    except Exception as e:
+                        logger.warning(f"⚠️ Cookies не сработали: {e}")
+                        sync_send_message(f"⚠️ Cookies не сработали. Попробуйте экспортировать заново.")
+                        if context:
+                            context.close()
+                        context = None
+                else:
+                    logger.error("❌ Не удалось загрузить cookies")
+                    if context:
+                        context.close()
+                    context = None
+            
+            # ПРИОРИТЕТ 2: Пытаемся загрузить старую Playwright сессию
+            elif session_manager.session_exists():
                 logger.info("🔄 Пробуем загрузить сохраненную сессию...")
                 sync_send_message("🔄 Найдена сохраненная сессия. Проверяем...")
                 
@@ -194,10 +142,7 @@ def main():
                     page.set_default_timeout(Config.DEFAULT_TIMEOUT)
                     page.set_default_navigation_timeout(Config.NAVIGATION_TIMEOUT)
                     
-                    # Применяем stealth даже для загруженной сессии
-                    if STEALTH_AVAILABLE and stealth_config:
-                        logger.info("🛡️ Применяем stealth-режим...")
-                        stealth_config.apply_stealth_sync(page)
+                    # Не применяем stealth - простая конфигурация работает лучше!
                     
                     try:
                         # Пробуем открыть страницу заказов
@@ -231,10 +176,7 @@ def main():
                 page.set_default_timeout(Config.DEFAULT_TIMEOUT)
                 page.set_default_navigation_timeout(Config.NAVIGATION_TIMEOUT)
                 
-                # Применяем playwright-stealth для обхода детектирования
-                if STEALTH_AVAILABLE and stealth_config:
-                    logger.info("🛡️ Применяем stealth-режим...")
-                    stealth_config.apply_stealth_sync(page)
+                # Не применяем stealth - простая конфигурация работает лучше!
             
             # Убеждаемся что page определен
             if page is None:
