@@ -5,6 +5,16 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
 from loguru import logger
 
+try:
+    from playwright_stealth import Stealth
+    stealth_config = Stealth()
+    STEALTH_AVAILABLE = True
+    logger.info("✅ playwright-stealth загружен (v2.0)")
+except ImportError:
+    logger.warning("playwright-stealth не установлен, используем базовую защиту")
+    STEALTH_AVAILABLE = False
+    stealth_config = None
+
 # Настройка логирования
 Path('logs').mkdir(exist_ok=True)
 logger.add(
@@ -52,9 +62,16 @@ def setup_browser_context(browser: Browser) -> BrowserContext:
             get: () => undefined
         });
         
+        // Подменяем automation
+        delete navigator.__proto__.webdriver;
+        
         // Подменяем plugins
         Object.defineProperty(navigator, 'plugins', {
-            get: () => [1, 2, 3, 4, 5]
+            get: () => [
+                {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format'},
+                {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: ''},
+                {name: 'Native Client', filename: 'internal-nacl-plugin', description: ''}
+            ]
         });
         
         // Подменяем languages
@@ -64,7 +81,10 @@ def setup_browser_context(browser: Browser) -> BrowserContext:
         
         // Chrome property
         window.chrome = {
-            runtime: {}
+            runtime: {},
+            loadTimes: function() {},
+            csi: function() {},
+            app: {}
         };
         
         // Permissions
@@ -74,6 +94,46 @@ def setup_browser_context(browser: Browser) -> BrowserContext:
                 Promise.resolve({ state: Notification.permission }) :
                 originalQuery(parameters)
         );
+        
+        // Убираем automation флаги
+        const originalAddEventListener = EventTarget.prototype.addEventListener;
+        EventTarget.prototype.addEventListener = function(type, listener, options) {
+            if (type === 'beforeunload') {
+                return;
+            }
+            return originalAddEventListener.call(this, type, listener, options);
+        };
+        
+        // Переопределяем toString для функций
+        const originalToString = Function.prototype.toString;
+        Function.prototype.toString = function() {
+            if (this === window.navigator.permissions.query) {
+                return 'function query() { [native code] }';
+            }
+            return originalToString.call(this);
+        };
+        
+        // Добавляем случайные шумы в canvas
+        const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+        CanvasRenderingContext2D.prototype.getImageData = function() {
+            const imageData = originalGetImageData.apply(this, arguments);
+            for (let i = 0; i < imageData.data.length; i += 4) {
+                imageData.data[i] += Math.random() * 0.1 - 0.05;
+            }
+            return imageData;
+        };
+        
+        // WebGL fingerprint protection
+        const getParameter = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function(parameter) {
+            if (parameter === 37445) {
+                return 'Intel Inc.';
+            }
+            if (parameter === 37446) {
+                return 'Intel Iris OpenGL Engine';
+            }
+            return getParameter.call(this, parameter);
+        };
     """)
     
     return context
@@ -102,10 +162,17 @@ def main():
                 args=[
                     '--disable-blink-features=AutomationControlled',
                     '--disable-dev-shm-usage',
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
                     '--disable-web-security',
                     '--disable-features=IsolateOrigins,site-per-process',
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-infobars',
+                    '--window-position=0,0',
+                    '--ignore-certificate-errors',
+                    '--ignore-certificate-errors-spki-list',
+                    '--disable-gpu',
+                    '--disable-software-rasterizer',
+                    '--disable-extensions',
                 ]
             )
             
@@ -125,6 +192,11 @@ def main():
                     page = context.new_page()
                     page.set_default_timeout(Config.DEFAULT_TIMEOUT)
                     page.set_default_navigation_timeout(Config.NAVIGATION_TIMEOUT)
+                    
+                    # Применяем stealth даже для загруженной сессии
+                    if STEALTH_AVAILABLE and stealth_config:
+                        logger.info("🛡️ Применяем stealth-режим...")
+                        stealth_config.apply_stealth_sync(page)
                     
                     try:
                         # Пробуем открыть страницу заказов
@@ -157,6 +229,11 @@ def main():
                 page = context.new_page()
                 page.set_default_timeout(Config.DEFAULT_TIMEOUT)
                 page.set_default_navigation_timeout(Config.NAVIGATION_TIMEOUT)
+                
+                # Применяем playwright-stealth для обхода детектирования
+                if STEALTH_AVAILABLE and stealth_config:
+                    logger.info("🛡️ Применяем stealth-режим...")
+                    stealth_config.apply_stealth_sync(page)
             
             # Убеждаемся что page определен
             if page is None:

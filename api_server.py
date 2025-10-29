@@ -48,7 +48,7 @@ class TriggerRequest(BaseModel):
     force: bool = False  # Принудительный запуск даже если уже выполняется
 
 
-def verify_api_key(authorization: str) -> bool:
+def verify_api_key(authorization: Optional[str]) -> bool:
     """Проверка API ключа"""
     if not authorization:
         return False

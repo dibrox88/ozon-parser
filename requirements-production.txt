@@ -3,6 +3,7 @@
 
 # Core dependencies
 playwright==1.48.0
+playwright-stealth==2.0.0
 python-telegram-bot==21.7
 loguru==0.7.3
 python-dotenv==1.0.1
