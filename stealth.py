@@ -10,7 +10,7 @@ class StealthHelper:
     """Помощник для скрытной автоматизации."""
     
     @staticmethod
-    def human_delay(min_sec: float = 0.5, max_sec: float = 2.0):
+    def human_delay(min_sec: float = 1.0, max_sec: float = 3.0):
         """
         Случайная задержка, имитирующая человека.
         
@@ -20,6 +20,7 @@ class StealthHelper:
         """
         delay = random.uniform(min_sec, max_sec)
         time.sleep(delay)
+        logger.debug(f"Задержка: {delay:.2f}с")
     
     @staticmethod
     def human_type(page: Page, selector: str, text: str, delay_ms: Optional[int] = None):

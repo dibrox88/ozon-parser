@@ -9,6 +9,7 @@ from playwright.sync_api import Page, Browser, sync_playwright, TimeoutError as 
 from loguru import logger
 from config import Config
 from notifier import sync_send_message, sync_send_photo, sync_wait_for_input
+from stealth import StealthHelper
 
 try:
     from PIL import Image
@@ -122,7 +123,7 @@ class OzonAuth:
             
             # Ждем загрузки страницы
             self.page.wait_for_load_state('networkidle', timeout=Config.DEFAULT_TIMEOUT)
-            time.sleep(2)
+            StealthHelper.human_delay(2, 4)  # Имитация человека
             
             # Делаем скриншот
             #screenshot = self._take_screenshot('main_page')

@@ -159,11 +159,12 @@ def main():
             # Запускаем Chromium с аргументами для обхода защиты
             browser = p.chromium.launch(
                 headless=Config.HEADLESS,
+                slow_mo=50,  # Замедляем действия для имитации человека
                 args=[
                     '--disable-blink-features=AutomationControlled',
                     '--disable-dev-shm-usage',
                     '--disable-web-security',
-                    '--disable-features=IsolateOrigins,site-per-process',
+                    '--disable-features=IsolateOrigins,site-per-process,VizDisplayCompositor',
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-infobars',
