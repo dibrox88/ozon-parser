@@ -168,29 +168,26 @@ def sync_send_photo(photo_path: str, caption: Optional[str] = None) -> bool:
     Returns:
         True если успешно
     """
-    # ОТКЛЮЧЕНО ДЛЯ ТЕСТОВ - раскомментировать для продакшена
-    return True
+    notifier = TelegramNotifier()
+    loop = get_or_create_eventloop()
     
-    # notifier = TelegramNotifier()
-    # loop = get_or_create_eventloop()
-    # 
-    # if loop.is_running():
-    #     # Создаем новый event loop в отдельном потоке
-    #     import threading
-    #     result = [False]
-    #     
-    #     def run_async():
-    #         new_loop = asyncio.new_event_loop()
-    #         asyncio.set_event_loop(new_loop)
-    #         result[0] = new_loop.run_until_complete(notifier.send_photo(photo_path, caption))
-    #         new_loop.close()
-    #     
-    #     thread = threading.Thread(target=run_async)
-    #     thread.start()
-    #     thread.join()
-    #     return result[0]
-    # else:
-    #     return loop.run_until_complete(notifier.send_photo(photo_path, caption))
+    if loop.is_running():
+        # Создаем новый event loop в отдельном потоке
+        import threading
+        result = [False]
+        
+        def run_async():
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            result[0] = new_loop.run_until_complete(notifier.send_photo(photo_path, caption))
+            new_loop.close()
+        
+        thread = threading.Thread(target=run_async)
+        thread.start()
+        thread.join()
+        return result[0]
+    else:
+        return loop.run_until_complete(notifier.send_photo(photo_path, caption))
 
 
 def sync_wait_for_input(prompt: str, timeout: int = 300) -> Optional[str]:
