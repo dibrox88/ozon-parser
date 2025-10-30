@@ -1,0 +1,59 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Локальные файлы
+*.local
+.env
+.env.local
+
+# Логи и временные файлы
+logs/
+screenshots/
+browser_state/
+*.log
+
+# Тестовые файлы
+test_*.py
+test_*.json
+
+# JSON файлы с данными (кроме product_mappings)
+ozon_orders.json
+ozon_cookies.json
+excluded_orders.json
+test_order_*.json
+
+# Markdown документация (опционально, можно оставить)
+*.md
+!README.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Скрипты деплоя
+*.sh
+*.ps1
+copy-to-server.ps1
+update-server.ps1
+deploy.sh
+setup-*.sh
+
+# Cloud init
+cloud-init*.yaml
