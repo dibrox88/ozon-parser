@@ -48,8 +48,9 @@ COPY requirements.txt .
 # Устанавливаем Python зависимости
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Устанавливаем браузеры Playwright (только chromium, без дополнительных зависимостей)
-RUN playwright install --with-deps chromium
+# Устанавливаем только браузер Chromium БЕЗ системных зависимостей
+# (системные зависимости уже установлены выше)
+RUN playwright install chromium
 
 # Копируем весь код приложения
 COPY . .
