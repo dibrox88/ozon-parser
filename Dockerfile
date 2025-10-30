@@ -7,6 +7,8 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     ca-certificates \
     fonts-liberation \
+    fonts-noto-color-emoji \
+    fonts-noto-cjk \
     libasound2 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
@@ -31,9 +33,7 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     xdg-utils \
     # Для OpenCV
-    libglib2.0-0 \
     libsm6 \
-    libxext6 \
     libxrender-dev \
     libgomp1 \
     libgthread-2.0-0 \
@@ -48,9 +48,8 @@ COPY requirements.txt .
 # Устанавливаем Python зависимости
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Устанавливаем браузеры Playwright
-RUN playwright install chromium
-RUN playwright install-deps chromium
+# Устанавливаем браузеры Playwright (только chromium, без дополнительных зависимостей)
+RUN playwright install --with-deps chromium
 
 # Копируем весь код приложения
 COPY . .
