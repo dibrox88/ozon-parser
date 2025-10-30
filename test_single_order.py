@@ -10,7 +10,7 @@ import json
 
 def test_single_order():
     """Тест парсинга одного заказа."""
-    order_number = "46206571-0636"
+    order_number = "46206571-0662"
     
     logger.info(f"🧪 Тестируем парсинг заказа: {order_number}")
     
@@ -25,6 +25,18 @@ def test_single_order():
             viewport={'width': 1920, 'height': 1080},
             user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         )
+        
+        # Маскировка автоматизации
+        context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { 
+                get: () => undefined 
+            });
+            
+            Object.defineProperty(navigator, 'plugins', { 
+                get: () => [1, 2, 3, 4, 5] 
+            });
+        """)
+        logger.debug("✅ Добавлен init_script для маскировки автоматизации")
         
         page = context.new_page()
         

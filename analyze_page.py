@@ -30,6 +30,17 @@ def analyze_orders_page():
                 user_agent=Config.USER_AGENT,
             )
             
+            # Маскировка автоматизации
+            context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { 
+                    get: () => undefined 
+                });
+                
+                Object.defineProperty(navigator, 'plugins', { 
+                    get: () => [1, 2, 3, 4, 5] 
+                });
+            """)
+            
             page = context.new_page()
             
             # Авторизация

@@ -50,6 +50,18 @@ def setup_browser_context(browser: Browser) -> BrowserContext:
         timezone_id='Europe/Moscow',
     )
     
+    # Маскировка автоматизации (резервный слой поверх playwright-stealth)
+    context.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', { 
+            get: () => undefined 
+        });
+        
+        Object.defineProperty(navigator, 'plugins', { 
+            get: () => [1, 2, 3, 4, 5] 
+        });
+    """)
+    logger.debug("✅ Добавлен init_script для маскировки автоматизации")
+    
     return context
 
 
