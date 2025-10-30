@@ -60,6 +60,7 @@ RUN mkdir -p logs screenshots browser_state
 # Переменные окружения по умолчанию
 ENV HEADLESS=true
 ENV PORT=8000
+ENV DISPLAY=:99
 
 # Открываем порт
 EXPOSE 8000
