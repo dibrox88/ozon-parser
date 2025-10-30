@@ -1,27 +1,14 @@
 # Конфигурация для Amvera.ru
+# Используем Dockerfile для сборки
 meta:
-  environment: python
+  environment: docker
   toolchain:
-    name: python
-    version: 3.12
+    name: docker
 
 build:
-  # Команды для сборки (выполняются при деплое)
-  - pip install -r requirements.txt
-  - playwright install chromium
-  - playwright install-deps chromium
+  # Сборка через Dockerfile
+  dockerfile: Dockerfile
 
 run:
-  # Команда для запуска приложения
+  # Команда запуска из Dockerfile будет использована автоматически
   containerPort: 8000
-  command: python -m uvicorn api_server:app --host 0.0.0.0 --port 8000
-
-# Переменные окружения (заполняются в веб-интерфейсе Amvera)
-env:
-  - HEADLESS=true
-  - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-  - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-  - OZON_EMAIL=${OZON_EMAIL}
-  - OZON_USER_ID=${OZON_USER_ID}
-  - GOOGLE_SHEETS_URL=${GOOGLE_SHEETS_URL}
-  - API_SECRET_KEY=${API_SECRET_KEY}
