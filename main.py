@@ -6,14 +6,15 @@ from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
 from loguru import logger
 
 try:
+    # playwright-stealth v2.0.0
     from playwright_stealth import Stealth
-    stealth_config = Stealth()
+    stealth = Stealth()
     STEALTH_AVAILABLE = True
     logger.info("✅ playwright-stealth загружен (v2.0)")
 except ImportError:
     logger.warning("playwright-stealth не установлен, используем базовую защиту")
     STEALTH_AVAILABLE = False
-    stealth_config = None
+    stealth = None
 
 # Настройка логирования
 Path('logs').mkdir(exist_ok=True)
@@ -44,7 +45,7 @@ def setup_browser_context(browser: Browser) -> BrowserContext:
     """
     context = browser.new_context(
         viewport={'width': 1920, 'height': 1080},
-        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         locale='ru-RU',
         timezone_id='Europe/Moscow',
     )
@@ -73,16 +74,14 @@ def main():
             logger.info("🌐 Запускаем браузер с минимальными настройками...")
             browser = p.chromium.launch(
                 headless=Config.HEADLESS,
-                args=[
-                    '--start-maximized',
-                    '--disable-blink-features=AutomationControlled',
-                ]
+                args=['--start-maximized']
             )
             
             # Пробуем загрузить сохраненную сессию или экспортированные cookies
             context = None
             page = None
             needs_auth = True
+            cookies_failed = False  # Флаг: пытались ли использовать cookies и они не сработали
             
             # ПРИОРИТЕТ 1: Проверяем наличие экспортированных cookies (обходит блокировку!)
             if session_manager.cookies_exist():
@@ -95,10 +94,14 @@ def main():
                 # Загружаем cookies
                 if session_manager.load_cookies_to_context(context):
                     page = context.new_page()
+                    
+                    # Применяем stealth для обхода антибот защиты
+                    if STEALTH_AVAILABLE and stealth:
+                        stealth.apply_stealth_sync(page)
+                        logger.info("✅ Stealth применен к странице")
+                    
                     page.set_default_timeout(Config.DEFAULT_TIMEOUT)
                     page.set_default_navigation_timeout(Config.NAVIGATION_TIMEOUT)
-                    
-                    # Не применяем stealth - простая конфигурация работает лучше!
                     
                     try:
                         # Пробуем открыть страницу заказов
@@ -115,8 +118,8 @@ def main():
                         else:
                             logger.warning("⚠️ Cookies устарели, требуется повторный экспорт")
                             sync_send_message("⚠️ Cookies устарели. Экспортируйте новые: python export_cookies.py")
-                            context.close()
-                            context = None
+                            cookies_failed = True  # Отмечаем что cookies не сработали, но page ещё открыт
+                            # НЕ закрываем context и page - переиспользуем их для авторизации
                     except Exception as e:
                         logger.warning(f"⚠️ Cookies не сработали: {e}")
                         sync_send_message(f"⚠️ Cookies не сработали. Попробуйте экспортировать заново.")
@@ -139,10 +142,14 @@ def main():
                 if context:
                     # Проверяем, работает ли сессия
                     page = context.new_page()
+                    
+                    # Применяем stealth для обхода антибот защиты
+                    if STEALTH_AVAILABLE and stealth:
+                        stealth.apply_stealth_sync(page)
+                        logger.info("✅ Stealth применен к странице")
+                    
                     page.set_default_timeout(Config.DEFAULT_TIMEOUT)
                     page.set_default_navigation_timeout(Config.NAVIGATION_TIMEOUT)
-                    
-                    # Не применяем stealth - простая конфигурация работает лучше!
                     
                     try:
                         # Пробуем открыть страницу заказов
@@ -173,10 +180,14 @@ def main():
             if context is None:
                 context = setup_browser_context(browser)
                 page = context.new_page()
+                
+                # Применяем stealth для обхода антибот защиты
+                if STEALTH_AVAILABLE and stealth:
+                    stealth.apply_stealth_sync(page)
+                    logger.info("✅ Stealth применен к странице")
+                
                 page.set_default_timeout(Config.DEFAULT_TIMEOUT)
                 page.set_default_navigation_timeout(Config.NAVIGATION_TIMEOUT)
-                
-                # Не применяем stealth - простая конфигурация работает лучше!
             
             # Убеждаемся что page определен
             if page is None:
@@ -186,7 +197,8 @@ def main():
                 # Авторизация (если нужна)
                 if needs_auth:
                     auth = OzonAuth(page)
-                    if not auth.login():
+                    # Если cookies не сработали, передаём флаг чтобы не делать лишний goto
+                    if not auth.login(skip_initial_navigation=cookies_failed):
                         logger.error("Не удалось авторизоваться")
                         sync_send_message("❌ Авторизация не удалась")
                         return

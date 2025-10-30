@@ -34,7 +34,9 @@ class OzonAuth:
         """
         self.page = page
         self.config = Config()
-        
+        # Защита от повторных нажатий/открытий
+        self._login_clicked = False
+
         # Создаем директорию для скриншотов
         Path(Config.SCREENSHOTS_DIR).mkdir(exist_ok=True)
     
@@ -112,12 +114,23 @@ class OzonAuth:
     
     def open_login_page(self) -> bool:
         """
-        Открыть страницу входа.
+        Открыть страницу входа (если ещё не на Ozon).
         
         Returns:
             True если успешно
         """
         try:
+            current_url = self.page.url
+            
+            # Проверяем, не находимся ли мы уже на ozon.ru
+            if 'ozon.ru' in current_url:
+                logger.info(f"📍 Уже на странице Ozon: {current_url}, пропускаем переход")
+                # Делаем скриншот для диагностики
+                screenshot = self._take_screenshot('already_on_ozon')
+                sync_send_photo(screenshot, f"Уже на Ozon\nURL: {current_url}")
+                return True
+            
+            # Если не на Ozon - переходим
             logger.info("Открываем главную страницу Ozon")
             self.page.goto(Config.OZON_LOGIN_URL, timeout=Config.NAVIGATION_TIMEOUT)
             
@@ -132,16 +145,13 @@ class OzonAuth:
             
             logger.info(f"📍 Текущий URL: {current_url}")
             logger.info(f"📄 Заголовок страницы: {page_title}")
-            logger.info(f"📝 Начало HTML: {page_content}")
+            #logger.info(f"📝 Начало HTML: {page_content}")
             
             # Проверяем на признаки блокировки
-            if "captcha" in current_url.lower() or "captcha" in page_content.lower():
-                logger.error("❌ ОБНАРУЖЕНА КАПЧА!")
-            elif "access" in current_url.lower() or "denied" in page_content.lower():
+            if "доступ" in page_title.lower():
                 logger.error("❌ ДОСТУП ЗАПРЕЩЕН!")
-            elif "cloudflare" in page_content.lower():
-                logger.error("❌ CLOUDFLARE ЗАЩИТА!")
-            
+      
+
             # Делаем скриншот для диагностики
             screenshot = self._take_screenshot('main_page_diagnostic')
             sync_send_photo(screenshot, f"Диагностика загрузки\nURL: {current_url}\nTitle: {page_title}")
@@ -164,15 +174,21 @@ class OzonAuth:
         """
         try:
             logger.info("Ищем кнопку входа")
+
+            # Защита: если уже кликали раньше, не делаем это снова
+            if getattr(self, '_login_clicked', False):
+                logger.info("Кнопка входа уже была нажата ранее, пропускаем повторный клик")
+                return True
             
             # Возможные селекторы кнопки входа
+            # ВАЖНО: Кликаем на КОНТЕЙНЕР с data-widget, а не на вложенный span!
             selectors = [
-                'span.tsCompact300XSmall:has-text("Войти")',  # Новый селектор Ozon 2025
-                'text="Войти"',
-                'button:has-text("Войти")',
-                'a:has-text("Войти")',
-                'span:has-text("Войти")',  # Любой span с текстом Войти
-                '[class*="Compact"]:has-text("Войти")',  # Любой класс содержащий Compact
+                'div[data-widget="profileMenuAnonymous"]',  # ПРАВИЛЬНЫЙ селектор - интерактивный контейнер
+                '[data-widget="profileMenuAnonymous"]',  # Без указания тега
+                'div[tabindex="0"]:has-text("Войти")',  # Кликабельный div с текстом Войти
+                'div.vq8_36',  # По классу контейнера
+                'text="Войти"',  # Запасной вариант
+                'a:has-text("Войти")',  # Ссылка (на случай другого дизайна)
             ]
             
             logger.info(f"Пробуем {len(selectors)} селекторов для кнопки входа")
@@ -190,25 +206,27 @@ class OzonAuth:
                         if screenshot:
                             pass  # sync_send_photo(screenshot, f"Найдена кнопка входа: {selector}")
                         
-                        # Кликаем и ждем появления модального окна или iframe
-                        element.click()
-                        logger.info(f"✅ Кликнули на кнопку входа: {selector}")
+                        # Защита: пометим что клик будет выполнен
+                        self._login_clicked = True
                         
+                        # Простой клик
+                        element.click()
+                        logger.info(f"✅ Клик выполнен: {selector}")
+
                         # Ждем появления iframe или модального окна
                         time.sleep(3)
-                        
+
                         # Проверяем iframe
                         iframes = self.page.frames
                         logger.info(f"После клика найдено {len(iframes)} фреймов")
-                        
+
                         # Ждем загрузки модального окна
                         try:
-                            # Пробуем найти поле ввода (телефон или email)
-                            self.page.wait_for_selector('input[type="tel"]', 
-                                                       timeout=5000, state='visible')
+                            # Пробуем найти поле ввода (телефон или email) на основной странице
+                            self.page.wait_for_selector('input[type="tel"]', timeout=5000, state='visible')
                             logger.info("✅ Модальное окно загружено, найдено поле ввода")
-                        except:
-                            logger.warning("Поле ввода не найдено сразу, возможно в iframe")
+                        except Exception:
+                            logger.warning("Поле ввода не найдено сразу на основной странице, возможно в iframe или нужно увеличить окно")
  
                         return True
                 except PlaywrightTimeout:
@@ -290,7 +308,22 @@ class OzonAuth:
                         text = element.inner_text().strip()
                         if len(text) < 50 and 'Войти по почте' in text:
                             logger.info(f"✅ Найдена кнопка на основной странице: {selector}")
-                            element.click()
+                            # Попытка безопасного клика: привести в фокус, скролл, клик с резервным форсом
+                            try:
+                                try:
+                                    self.page.bring_to_front()
+                                except Exception:
+                                    pass
+                                try:
+                                    element.scroll_into_view_if_needed()
+                                except Exception:
+                                    pass
+                                try:
+                                    element.click(timeout=3000)
+                                except Exception:
+                                    element.click(force=True, timeout=3000)
+                            except Exception as e_click_main:
+                                logger.error(f"Ошибка при клике на основной странице: {e_click_main}")
                             logger.info(f"✅ КЛИК ВЫПОЛНЕН по элементу на основной странице")
                             time.sleep(3)
                             screenshot = self._take_screenshot('email_login_selected')
@@ -357,8 +390,24 @@ class OzonAuth:
                         except:
                             pass
                         
-                        # Кликаем
-                        element.click()
+                        # Кликаем (попытка безопасного клика)
+                        try:
+                            try:
+                                # Попытка фокуса фрейма
+                                try:
+                                    self.page.bring_to_front()
+                                except Exception:
+                                    pass
+                                element.scroll_into_view_if_needed()
+                            except Exception:
+                                pass
+
+                            try:
+                                element.click(timeout=3000)
+                            except Exception:
+                                element.click(force=True, timeout=3000)
+                        except Exception as e_if_click:
+                            logger.error(f"Ошибка при клике в iframe: {e_if_click}")
                         logger.info(f"✅ КЛИК ВЫПОЛНЕН по элементу: {selector}")
                         time.sleep(3)
                         
@@ -385,8 +434,22 @@ class OzonAuth:
                         except:
                             pass
                         
-                        # Кликаем
-                        element.click()
+                        # Безопасный клик по XPath-элементу
+                        try:
+                            try:
+                                self.page.bring_to_front()
+                            except Exception:
+                                pass
+                            try:
+                                element.scroll_into_view_if_needed()
+                            except Exception:
+                                pass
+                            try:
+                                element.click(timeout=3000)
+                            except Exception:
+                                element.click(force=True, timeout=3000)
+                        except Exception as e_xp_click:
+                            logger.error(f"Ошибка при клике по XPath: {e_xp_click}")
                         logger.info(f"✅ КЛИК ВЫПОЛНЕН по XPath: {xpath}")
                         time.sleep(3)
                         
@@ -927,6 +990,11 @@ class OzonAuth:
         try:
             logger.info("Ждем поле для ввода SMS кода")
             
+            # ПРОВЕРКА: Может авторизация уже прошла?
+            if self.verify_login():
+                logger.success("✅ Уже авторизованы! SMS код не требуется.")
+                return True
+            
             # Делаем скриншот
             time.sleep(2)
             screenshot = self._take_screenshot('sms_code_request')
@@ -1087,6 +1155,11 @@ class OzonAuth:
         """
         try:
             logger.info("Ждем поле для ввода кода из email")
+            
+            # ПРОВЕРКА: Может авторизация уже прошла?
+            if self.verify_login():
+                logger.success("✅ Уже авторизованы! Email код не требуется.")
+                return True
             
             # Делаем скриншот
             time.sleep(2)
@@ -1281,12 +1354,6 @@ class OzonAuth:
             current_url = self.page.url
             logger.info(f"📍 Текущий URL: {current_url}")
             
-            # Если мы на странице заказов - 100% авторизованы
-            if '/my/orderlist' in current_url or '/my/main' in current_url:
-                logger.success("✅ Мы на странице 'Мои заказы' - авторизация успешна!")
-                screenshot = self._take_screenshot('after_login')
-                sync_send_photo(screenshot, "✅ Авторизация успешна! Мы на странице заказов")
-                return True
             
             # Делаем скриншот
             screenshot = self._take_screenshot('after_login')
@@ -1313,7 +1380,7 @@ class OzonAuth:
                     element = self.page.query_selector(indicator)
                     if element and element.is_visible():
                         logger.warning(f"❌ Обнаружен индикатор неавторизации: {indicator}")
-                        logger.warning(f"Текст элемента: {element.inner_text()[:100]}")
+                         # logger.warning(f"Текст элемента: {element.inner_text()[:100]}")
                         sync_send_photo(screenshot, "❌ Авторизация не выполнена")
                         return False
                 except:
@@ -1350,9 +1417,12 @@ class OzonAuth:
             logger.error(f"Ошибка при проверке авторизации: {e}")
             return False
     
-    def login(self) -> bool:
+    def login(self, skip_initial_navigation: bool = False) -> bool:
         """
         Полный процесс авторизации через email с автоматическим переключением на телефон при превышении лимита.
+        
+        Args:
+            skip_initial_navigation: Если True, пропускаем открытие главной страницы (уже на ozon.ru)
         
         Returns:
             True если успешно
@@ -1360,15 +1430,24 @@ class OzonAuth:
         try:
             sync_send_message("🚀 Начинаем процесс авторизации на Ozon через email...")
             
-            # Шаг 1: Открываем страницу
-            if not self.open_login_page():
-                sync_send_message("❌ Ошибка при открытии страницы")
-                return False
+            # Шаг 1: Открываем страницу (если нужно)
+            if not skip_initial_navigation:
+                if not self.open_login_page():
+                    sync_send_message("❌ Ошибка при открытии страницы")
+                    return False
+            else:
+                logger.info("⏭️ Пропускаем открытие страницы, используем текущую")
             
             # Шаг 2: Нажимаем кнопку "Войти"
             if not self.click_login_button():
                 sync_send_message("❌ Ошибка при открытии формы входа")
                 return False
+            
+            # ПРОВЕРКА: Может быть уже авторизованы? (cookies сработали после клика)
+            if self.verify_login():
+                logger.success("✅ Уже авторизованы! Cookies сработали.")
+                sync_send_message("✅ Авторизация успешна! Cookies действительны.")
+                return True
             
             # ПРОВЕРКА: Превышен ли лимит попыток?
             if self.check_rate_limit_error():
@@ -1392,6 +1471,13 @@ class OzonAuth:
             # Шаг 3: Пытаемся выбрать "Войти по почте" (если есть такая опция)
             # Если не найдем - продолжим, т.к. форма может быть универсальной
             email_button_found = self.click_email_login_button()
+            
+            # ПРОВЕРКА: Может уже авторизованы после клика email?
+            if self.verify_login():
+                logger.success("✅ Авторизация успешна!")
+                sync_send_message("✅ Вход выполнен успешно!")
+                return True
+            
             if not email_button_found:
                 logger.warning("Кнопка email не найдена, проверяем лимит и пробуем альтернативы")
                 
@@ -1422,6 +1508,12 @@ class OzonAuth:
             if not self.enter_email():
                 sync_send_message("❌ Ошибка при вводе email")
                 return False
+            
+            # ПРОВЕРКА: Может авторизация прошла без кода? (некоторые аккаунты)
+            if self.verify_login():
+                logger.success("✅ Авторизация успешна после ввода email!")
+                sync_send_message("✅ Вход выполнен успешно!")
+                return True
             
             # Шаг 6: Обрабатываем капчу после ввода email
             if not self.handle_captcha():
