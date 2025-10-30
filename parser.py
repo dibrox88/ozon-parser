@@ -435,13 +435,13 @@ class OzonParser:
                                 logger.debug(f"Не найдена цена/количество для '{name}', пропускаем")
                                 continue
                             
-                            # # Проверяем дубликаты
-                            # item_key = f"{name}_{quantity}_{price}"
-                            # if item_key in seen_items:
-                            #     logger.debug(f"Пропускаем дубликат: {name}")
-                            #     continue
+                            # Проверяем дубликаты
+                            item_key = f"{name}_{quantity}_{price}"
+                            if item_key in seen_items:
+                                logger.debug(f"Пропускаем дубликат: {name}")
+                                continue
                             
-                            # seen_items.add(item_key)
+                            seen_items.add(item_key)
                             
                             items.append({
                                 'quantity': quantity,
