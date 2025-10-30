@@ -219,6 +219,39 @@ async def get_logs(
         raise HTTPException(status_code=500, detail=f"Error reading logs: {str(e)}")
 
 
+@app.post("/upload-cookies")
+async def upload_cookies(cookies: list, authorization: str = Header(None)):
+    """
+    Загрузка cookies для авторизации в Ozon
+    
+    Тело запроса: массив объектов cookies из браузера
+    """
+    if not verify_api_key(authorization):
+        raise HTTPException(status_code=401, detail="Unauthorized: Invalid or missing API key")
+    
+    try:
+        import json
+        
+        # Сохраняем в /data для постоянного хранилища (важно для Amvera!)
+        cookies_path = '/data/ozon_cookies.json' if os.path.exists('/data') else 'ozon_cookies.json'
+        
+        with open(cookies_path, 'w', encoding='utf-8') as f:
+            json.dump(cookies, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f"Cookies загружены: {len(cookies)} штук в {cookies_path}")
+        
+        return {
+            "status": "success",
+            "message": "Cookies uploaded successfully",
+            "cookies_count": len(cookies),
+            "saved_to": cookies_path
+        }
+    
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке cookies: {e}")
+        raise HTTPException(status_code=500, detail=f"Error uploading cookies: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     
