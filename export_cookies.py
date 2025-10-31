@@ -79,7 +79,26 @@ def export_cookies():
             browser.close()
             return False
         
-        logger.success(f"✅ Найдено {len(cookies)} cookies")
+        logger.info(f"📦 Получено {len(cookies)} cookies из браузера")
+        
+        # Удаляем дубликаты - оставляем последнюю (самую свежую) версию каждой cookie
+        # Ключ: только имя cookie (игнорируем домен/путь)
+        unique_cookies = {}
+        for cookie in cookies:
+            name = cookie.get('name', '')
+            expires = cookie.get('expires', -1)
+            
+            # Если такая cookie уже есть, сравниваем expires
+            if name in unique_cookies:
+                existing_expires = unique_cookies[name].get('expires', -1)
+                # Оставляем ту, что истекает позже (более свежая)
+                if expires > existing_expires:
+                    unique_cookies[name] = cookie
+            else:
+                unique_cookies[name] = cookie
+        
+        cookies = list(unique_cookies.values())
+        logger.success(f"✅ Уникальных cookies: {len(cookies)}")
         
         # Проверяем наличие важных cookies
         important_cookies = ['__Secure-access-token', '__Secure-refresh-token', 'xcid']
