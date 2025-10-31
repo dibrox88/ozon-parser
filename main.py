@@ -221,9 +221,14 @@ def main():
                     auth = OzonAuth(page)
                     # Если cookies не сработали, передаём флаг чтобы не делать лишний goto
                     if not auth.login(skip_initial_navigation=cookies_failed):
-                        logger.error("Не удалось авторизоваться")
-                        sync_send_message("❌ Авторизация не удалась")
-                        return
+                        logger.error("❌ Авторизация не удалась или обнаружена блокировка")
+                        sync_send_message("❌ <b>Работа остановлена</b>\n\nАвторизация не удалась или Ozon заблокировал доступ.")
+                        
+                        # КРИТИЧЕСКАЯ ОШИБКА - останавливаем парсинг полностью
+                        logger.error("🛑 ПАРСИНГ ОСТАНОВЛЕН: блокировка или неудачная авторизация")
+                        context.close()
+                        browser.close()
+                        sys.exit(1)  # Выход с кодом ошибки
                     
                     # Сохраняем сессию после успешной авторизации
                     logger.info("💾 Сохраняем сессию...")
@@ -235,9 +240,14 @@ def main():
                 # Парсинг
                 parser = OzonParser(page)
                 if not parser.navigate_to_orders():
-                    logger.error("Не удалось перейти к заказам")
-                    sync_send_message("❌ Не удалось перейти к заказам")
-                    return
+                    logger.error("❌ Не удалось перейти к заказам (возможна блокировка)")
+                    sync_send_message("❌ <b>Работа остановлена</b>\n\nНе удалось перейти к заказам.")
+                    
+                    # КРИТИЧЕСКАЯ ОШИБКА - останавливаем парсинг
+                    logger.error("🛑 ПАРСИНГ ОСТАНОВЛЕН: блокировка или ошибка доступа к заказам")
+                    context.close()
+                    browser.close()
+                    sys.exit(1)
                 
                 # Получаем список заказов
                 orders = parser.parse_orders()
@@ -255,14 +265,25 @@ def main():
                         logger.info(f"📦 [{i}/{len(orders)}] Парсим детали заказа: {order_number}")
                         sync_send_message(f"📦 Парсим заказ {order_number}")
                         
-                        order_details = parser.parse_order_details(order_number)
+                        try:
+                            order_details = parser.parse_order_details(order_number)
+                            
+                            if order_details:
+                                all_orders_data.append(order_details)
+                                logger.info(f"✅ [{i}/{len(orders)}] Успешно спарсен заказ {order_number}")
+                                logger.info(f"   Товаров: {order_details['items_count']}, Сумма: {order_details['total_amount']}₽")
+                            else:
+                                logger.warning(f"⚠️ [{i}/{len(orders)}] Не удалось спарсить заказ {order_number}")
                         
-                        if order_details:
-                            all_orders_data.append(order_details)
-                            logger.info(f"✅ [{i}/{len(orders)}] Успешно спарсен заказ {order_number}")
-                            logger.info(f"   Товаров: {order_details['items_count']}, Сумма: {order_details['total_amount']}₽")
-                        else:
-                            logger.warning(f"⚠️ [{i}/{len(orders)}] Не удалось спарсить заказ {order_number}")
+                        except RuntimeError as e:
+                            # Блокировка обнаружена - немедленно останавливаем парсинг
+                            if "Блокировка Ozon" in str(e):
+                                logger.error(f"🛑 ПАРСИНГ ОСТАНОВЛЕН: {e}")
+                                context.close()
+                                browser.close()
+                                sys.exit(1)
+                            else:
+                                raise  # Другие RuntimeError пробрасываем дальше
                     
                     logger.info(f"✅ Парсинг завершен. Успешно обработано: {len(all_orders_data)}/{len(orders)} заказов")
                     
