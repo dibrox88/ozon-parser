@@ -35,7 +35,7 @@ from session_manager import SessionManager
 
 def setup_browser_context(browser: Browser) -> BrowserContext:
     """
-    Настройка контекста браузера (простая версия как в export_cookies.py).
+    Настройка контекста браузера с улучшенными anti-detection параметрами.
     
     Args:
         browser: Браузер Playwright
@@ -48,6 +48,8 @@ def setup_browser_context(browser: Browser) -> BrowserContext:
         user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         locale='ru-RU',
         timezone_id='Europe/Moscow',
+        java_script_enabled=True,
+        ignore_https_errors=True  # Игнорирует SSL ошибки
     )
     
     # Маскировка автоматизации (резервный слой поверх playwright-stealth)
@@ -82,11 +84,19 @@ def main():
         with sync_playwright() as p:
             logger.info("Запуск браузера...")
             
-            # Простая конфигурация браузера (как в export_cookies.py - без блокировки!)
-            logger.info("🌐 Запускаем браузер с минимальными настройками...")
+            # Улучшенная конфигурация браузера (из парсера Amvera)
+            logger.info("🌐 Запускаем браузер с anti-detection настройками...")
             browser = p.chromium.launch(
                 headless=Config.HEADLESS,
-                args=['--start-maximized']
+                args=[
+                    '--start-maximized',
+                    '--disable-blink-features=AutomationControlled',  # Скрывает автоматизацию
+                    '--disable-dev-shm-usage',                        # Для Docker
+                    '--no-sandbox',                                   # Для Docker
+                    '--disable-web-security',                         # Убирает некоторые проверки
+                    '--disable-features=VizDisplayCompositor'         # Меньше GPU проверок
+                ],
+                slow_mo=50  # Замедляет действия (более человечно)
             )
             
             # Пробуем загрузить сохраненную сессию или экспортированные cookies
