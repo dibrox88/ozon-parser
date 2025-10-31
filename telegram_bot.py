@@ -7,7 +7,7 @@ import asyncio
 import subprocess
 import os
 from datetime import datetime
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.ext import Application, CommandHandler, ContextTypes
 from loguru import logger
 from config import Config
@@ -149,12 +149,24 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Ошибка в боте: {context.error}")
 
 
+async def post_init(application: Application):
+    """Настройка бота после инициализации - установка меню команд."""
+    commands = [
+        BotCommand("start", "🏠 Главное меню"),
+        BotCommand("parse", "🚀 Запустить парсинг"),
+        BotCommand("status", "📊 Статус парсера"),
+        BotCommand("help", "❓ Справка"),
+    ]
+    await application.bot.set_my_commands(commands)
+    logger.info("✅ Меню команд установлено")
+
+
 def main():
     """Запуск бота."""
     logger.info("🤖 Запуск Telegram бота для управления парсером...")
     
     # Создаем приложение
-    application = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).build()
+    application = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
     
     # Добавляем обработчики команд
     application.add_handler(CommandHandler("start", start_command))
