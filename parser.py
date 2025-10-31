@@ -484,6 +484,25 @@ class OzonParser:
             
             time.sleep(3)
             
+            # Проверяем на блокировку
+            page_title = self.page.title()
+            if "Доступ ограничен" in page_title or "Access Denied" in page_title:
+                logger.error("❌ БЛОКИРОВКА: Доступ ограничен на странице заказов!")
+                screenshot = self._take_screenshot('blocked_orders_page')
+                sync_send_photo(screenshot, f"❌ Блокировка Ozon: {page_title}")
+                sync_send_message(
+                    "🍪 <b>COOKIES УСТАРЕЛИ!</b>\n\n"
+                    "❌ Ozon блокирует доступ на странице заказов.\n\n"
+                    "📝 <b>Действия:</b>\n"
+                    "1. Запустите на локальной машине:\n"
+                    "   <code>python export_cookies.py</code>\n\n"
+                    "2. Скопируйте cookies на сервер:\n"
+                    "   <code>scp ozon_cookies.json ozon@SERVER:~/ozon_parser/</code>\n\n"
+                    "⏰ Cookies нужно обновлять каждые 3-7 дней.\n\n"
+                    "🛑 <b>Парсинг остановлен.</b>"
+                )
+                return False
+            
             # Делаем скриншот
             screenshot = self._take_screenshot('orders_page')
             sync_send_photo(screenshot, "Страница заказов открыта")
@@ -516,6 +535,23 @@ class OzonParser:
             self.page.goto(order_url, timeout=Config.NAVIGATION_TIMEOUT)
             self.page.wait_for_load_state('networkidle', timeout=Config.DEFAULT_TIMEOUT)
             time.sleep(3)
+            
+            # Проверяем на блокировку
+            page_title = self.page.title()
+            if "Доступ ограничен" in page_title or "Access Denied" in page_title:
+                logger.error(f"❌ БЛОКИРОВКА на странице заказа {order_number}!")
+                screenshot = self._take_screenshot(f'blocked_order_{order_number}')
+                sync_send_photo(screenshot, f"❌ Блокировка при парсинге заказа {order_number}")
+                sync_send_message(
+                    "🛑 <b>БЛОКИРОВКА ОБНАРУЖЕНА!</b>\n\n"
+                    f"❌ Ozon заблокировал доступ при попытке открыть заказ <code>{order_number}</code>\n\n"
+                    "🍪 Cookies устарели. Обновите их:\n"
+                    "1. <code>python export_cookies.py</code>\n"
+                    "2. <code>scp ozon_cookies.json ozon@SERVER:~/ozon_parser/</code>\n\n"
+                    "🛑 <b>Парсинг остановлен.</b>"
+                )
+                # Возвращаем None чтобы остановить парсинг
+                raise RuntimeError(f"Блокировка Ozon при парсинге заказа {order_number}")
             
             # Делаем скриншот
             screenshot = self._take_screenshot(f'order_{order_number}')
