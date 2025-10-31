@@ -3,7 +3,7 @@ API сервер для удалённого запуска парсера че�
 Используется FastAPI для создания REST API endpoint
 """
 
-from fastapi import FastAPI, HTTPException, Header, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Header, BackgroundTasks, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import asyncio
