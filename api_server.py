@@ -252,6 +252,51 @@ async def upload_cookies(cookies: list, authorization: str = Header(None)):
         raise HTTPException(status_code=500, detail=f"Error uploading cookies: {str(e)}")
 
 
+@app.post("/test-telegram")
+async def test_telegram(api_key: str = Depends(verify_api_key)):
+    """
+    Тестовый эндпоинт для проверки работы Telegram уведомлений.
+    """
+    logger.info("Тестирование Telegram уведомлений...")
+    
+    try:
+        from notifier import sync_send_message
+        import os
+        
+        # Проверяем наличие переменных окружения
+        bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+        chat_id = os.getenv('TELEGRAM_CHAT_ID')
+        
+        if not bot_token or not chat_id:
+            return {
+                "status": "error",
+                "message": "Telegram credentials not configured",
+                "details": {
+                    "bot_token_exists": bool(bot_token),
+                    "chat_id_exists": bool(chat_id)
+                }
+            }
+        
+        # Пытаемся отправить тестовое сообщение
+        success = sync_send_message("🧪 <b>Тест уведомлений</b>\n\nЭто тестовое сообщение с Amvera!")
+        
+        return {
+            "status": "success" if success else "failed",
+            "message": "Test message sent" if success else "Failed to send message",
+            "details": {
+                "bot_token_length": len(bot_token) if bot_token else 0,
+                "chat_id": chat_id
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Ошибка при тестировании Telegram: {e}")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
 if __name__ == "__main__":
     import uvicorn
     
