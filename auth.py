@@ -1363,6 +1363,16 @@ class OzonAuth:
             if "Доступ ограничен" in page_title or "Access Denied" in page_title:
                 logger.error("❌ БЛОКИРОВКА: Доступ ограничен!")
                 sync_send_photo(screenshot, f"❌ Блокировка Ozon: {page_title}")
+                sync_send_message(
+                    "🍪 <b>COOKIES УСТАРЕЛИ!</b>\n\n"
+                    "❌ Ozon блокирует доступ с текущими cookies.\n\n"
+                    "📝 <b>Действия:</b>\n"
+                    "1. Запустите на локальной машине:\n"
+                    "   <code>python export_cookies.py</code>\n\n"
+                    "2. Скопируйте cookies на сервер:\n"
+                    "   <code>scp ozon_cookies.json ozon@SERVER:~/ozon_parser/</code>\n\n"
+                    "⏰ Cookies нужно обновлять каждые 3-7 дней."
+                )
                 return False
             
             # Сначала проверяем признаки НЕавторизации
