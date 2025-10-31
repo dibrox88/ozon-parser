@@ -1370,7 +1370,7 @@ class OzonAuth:
                     "1. Запустите на локальной машине:\n"
                     "   <code>python export_cookies.py</code>\n\n"
                     "2. Скопируйте cookies на сервер:\n"
-                    "   <code>scp ozon_cookies.json ozon@SERVER:~/ozon_parser/</code>\n\n"
+                    "   <code>scp ozon_cookies.json ozon@85.193.81.13:~/ozon_parser/</code>\n\n"
                     "⏰ Cookies нужно обновлять каждые 3-7 дней.\n\n"
                     "🛑 <b>Парсинг остановлен.</b>"
                 )
