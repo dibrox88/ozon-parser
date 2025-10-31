@@ -15,11 +15,16 @@ class SessionManager:
         """Инициализация."""
         self.state_dir = Path(Config.BROWSER_STATE_DIR)
         self.state_file = self.state_dir / "ozon_session.json"
-        self.cookies_file = Path("ozon_cookies.json")  # Новый: файл с экспортированными cookies
+        # Ищем cookies сначала в /data (постоянное хранилище Amvera), потом в текущей папке
+        if Path("/data/ozon_cookies.json").exists():
+            self.cookies_file = Path("/data/ozon_cookies.json")
+        else:
+            self.cookies_file = Path("ozon_cookies.json")
         
         # Создаем директорию если её нет
         self.state_dir.mkdir(exist_ok=True)
         logger.info(f"Директория сессий: {self.state_dir.absolute()}")
+        logger.info(f"Файл cookies: {self.cookies_file.absolute()}")
     
     def cookies_exist(self) -> bool:
         """
