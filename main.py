@@ -142,6 +142,18 @@ def main():
                             sync_send_message("⚠️ Cookies устарели. Экспортируйте новые: python export_cookies.py")
                             cookies_failed = True  # Отмечаем что cookies не сработали, но page ещё открыт
                             # НЕ закрываем context и page - переиспользуем их для авторизации
+                    
+                    except RuntimeError as e:
+                        # Блокировка обнаружена - немедленно останавливаем
+                        if "Блокировка Ozon" in str(e):
+                            logger.error(f"🛑 ПАРСИНГ ОСТАНОВЛЕН: {e}")
+                            if context:
+                                context.close()
+                            browser.close()
+                            sys.exit(1)
+                        else:
+                            raise  # Другие RuntimeError пробрасываем
+                    
                     except Exception as e:
                         logger.warning(f"⚠️ Cookies не сработали: {e}")
                         sync_send_message(f"⚠️ Cookies не сработали. Попробуйте экспортировать заново.")
@@ -190,6 +202,18 @@ def main():
                             session_manager.delete_session()
                             context.close()
                             context = None
+                    
+                    except RuntimeError as e:
+                        # Блокировка обнаружена
+                        if "Блокировка Ozon" in str(e):
+                            logger.error(f"🛑 ПАРСИНГ ОСТАНОВЛЕН: {e}")
+                            if context:
+                                context.close()
+                            browser.close()
+                            sys.exit(1)
+                        else:
+                            raise
+                    
                     except Exception as e:
                         logger.warning(f"⚠️ Не удалось использовать сохраненную сессию: {e}")
                         sync_send_message("⚠️ Не удалось использовать сессию. Выполняем авторизацию...")
