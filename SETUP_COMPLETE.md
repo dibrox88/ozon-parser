@@ -30,7 +30,7 @@ ssh ozon@85.193.81.13 "crontab -l"
 
 Действия:
 1. python export_cookies.py
-2. scp ozon_cookies.json ozon@SERVER:~/ozon_parser/
+2. scp ozon_cookies.json ozon@85.193.81.13:~/ozon_parser/
 ```
 
 ---

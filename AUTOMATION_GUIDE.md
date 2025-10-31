@@ -114,7 +114,7 @@ crontab -e
    python export_cookies.py
 
 2. Скопируйте cookies на сервер:
-   scp ozon_cookies.json ozon@SERVER:~/ozon_parser/
+   scp ozon_cookies.json ozon@85.193.81.13:~/ozon_parser/
 
 ⏰ Cookies нужно обновлять каждые 3-7 дней.
 ```
