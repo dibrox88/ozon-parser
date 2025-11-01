@@ -106,6 +106,53 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(status_message, parse_mode='HTML')
 
 
+async def monitor_parser_process(update: Update, process: subprocess.Popen):
+    """
+    Мониторинг процесса парсера в фоновом режиме.
+    Позволяет боту обрабатывать другие команды (например /stop).
+    """
+    global parsing_in_progress, current_parser_process
+    
+    try:
+        # Ждем завершения процесса с проверкой каждые 5 секунд
+        max_wait_time = 1800  # 30 минут максимум
+        elapsed = 0
+        
+        while elapsed < max_wait_time:
+            # Проверяем завершился ли процесс
+            returncode = process.poll()
+            
+            if returncode is not None:
+                # Процесс завершен
+                if returncode == 0:
+                    logger.info("✅ Парсинг завершен успешно")
+                    # Уведомление уже отправлено из main.py
+                else:
+                    logger.error(f"❌ Парсинг завершился с ошибкой: {returncode}")
+                break
+            
+            # Ждем 5 секунд перед следующей проверкой
+            await asyncio.sleep(5)
+            elapsed += 5
+        
+        else:
+            # Таймаут - убиваем процесс
+            logger.error("⏱️ Парсинг превысил лимит времени (30 мин)")
+            process.kill()
+            await update.message.reply_text(
+                "⏱️ <b>Превышено время выполнения</b>\n\n"
+                "Парсинг занял более 30 минут и был остановлен.",
+                parse_mode='HTML'
+            )
+    
+    except Exception as e:
+        logger.error(f"❌ Ошибка мониторинга процесса: {e}")
+    
+    finally:
+        parsing_in_progress = False
+        current_parser_process = None
+
+
 async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /parse - запустить парсинг вручную."""
     global parsing_in_progress, last_parse_time, current_parser_process
@@ -130,7 +177,7 @@ async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Парсинг запущен вручную пользователем {update.effective_user.id}")
     
     try:
-        # Запускаем парсер как subprocess
+        # Запускаем парсер как subprocess в фоновом режиме
         current_parser_process = subprocess.Popen(
             ['python', 'main.py'],
             stdout=subprocess.PIPE,
@@ -138,32 +185,11 @@ async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=True
         )
         
-        # Ждем завершения процесса с таймаутом
-        try:
-            stdout, stderr = current_parser_process.communicate(timeout=1800)  # 30 минут максимум
-            returncode = current_parser_process.returncode
-            
-            if returncode == 0:
-                logger.info("✅ Парсинг завершен успешно")
-            else:
-                logger.error(f"❌ Парсинг завершился с ошибкой: {returncode}")
-                await update.message.reply_text(
-                    f"❌ <b>Ошибка при выполнении парсинга</b>\n\n"
-                    f"Код ошибки: {returncode}\n"
-                    f"Проверьте логи для деталей.",
-                    parse_mode='HTML'
-                )
+        logger.info(f"✅ Процесс парсера запущен (PID: {current_parser_process.pid})")
         
-        except subprocess.TimeoutExpired:
-            # Убиваем процесс при таймауте
-            current_parser_process.kill()
-            logger.error("⏱️ Парсинг превысил лимит времени (30 мин)")
-            await update.message.reply_text(
-                "⏱️ <b>Превышено время выполнения</b>\n\n"
-                "Парсинг занял более 30 минут и был остановлен.\n"
-                "Проверьте логи для деталей.",
-                parse_mode='HTML'
-            )
+        # НЕ ждем завершения здесь - позволяем боту обрабатывать другие команды
+        # Запускаем фоновую задачу для мониторинга процесса
+        asyncio.create_task(monitor_parser_process(update, current_parser_process))
     
     except Exception as e:
         logger.error(f"❌ Ошибка при запуске парсера: {e}")
@@ -171,8 +197,6 @@ async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ <b>Ошибка</b>\n\n{str(e)}",
             parse_mode='HTML'
         )
-    
-    finally:
         parsing_in_progress = False
         current_parser_process = None
 
