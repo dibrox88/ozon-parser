@@ -6,15 +6,17 @@ Telegram бот для управления парсером Ozon.
 import asyncio
 import subprocess
 import os
+import signal
 from datetime import datetime
 from telegram import Update, BotCommand
 from telegram.ext import Application, CommandHandler, ContextTypes
 from loguru import logger
 from config import Config
 
-# Глобальная переменная для отслеживания статуса парсинга
+# Глобальные переменные для отслеживания статуса парсинга
 parsing_in_progress = False
 last_parse_time = None
+current_parser_process = None  # Текущий процесс парсера для остановки
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -23,7 +25,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 <b>Ozon Parser Bot</b>\n\n"
         "Доступные команды:\n\n"
         "/parse - Запустить парсинг вручную\n"
+        "/stop - Остановить парсинг\n"
         "/status - Показать статус парсера\n"
+        "/cron_on - ⏰ Включить автозапуск\n"
+        "/cron_off - ⏸️ Отключить автозапуск\n"
+        "/cron_status - 📋 Статус автозапуска\n"
         "/help - Показать эту справку\n\n"
         "⏰ Автоматический запуск: каждые 15 минут (9:00-21:00 МСК)"
     )
@@ -38,6 +44,18 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  • Парсит новые заказы\n"
         "  • Обновляет Google Sheets\n"
         "  • Отправляет уведомления о ходе работы\n\n"
+        "<b>/stop</b> - Остановить текущий парсинг\n"
+        "  • Принудительно завершает работающий процесс\n"
+        "  • Закрывает браузер и освобождает ресурсы\n\n"
+        "<b>/cron_on</b> - ⏰ Включить автоматический запуск\n"
+        "  • Активирует cron-задачу\n"
+        "  • Парсер будет запускаться каждые 15 мин (9:00-21:00)\n\n"
+        "<b>/cron_off</b> - ⏸️ Отключить автоматический запуск\n"
+        "  • Деактивирует cron-задачу\n"
+        "  • Парсер больше не будет запускаться автоматически\n\n"
+        "<b>/cron_status</b> - 📋 Проверить статус автозапуска\n"
+        "  • Показывает, включен ли cron\n"
+        "  • Последние записи из лога автозапуска\n\n"
         "<b>/status</b> - Проверить статус парсера\n"
         "  • Показывает, запущен ли парсер сейчас\n"
         "  • Время последнего запуска\n\n"
@@ -83,12 +101,12 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /parse - запустить парсинг вручную."""
-    global parsing_in_progress, last_parse_time
+    global parsing_in_progress, last_parse_time, current_parser_process
     
     if parsing_in_progress:
         await update.message.reply_text(
             "⚠️ <b>Парсер уже запущен!</b>\n\n"
-            "Дождитесь завершения текущего парсинга.",
+            "Дождитесь завершения текущего парсинга или используйте /stop для остановки.",
             parse_mode='HTML'
         )
         return
@@ -106,32 +124,39 @@ async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         # Запускаем парсер как subprocess
-        result = subprocess.run(
+        current_parser_process = subprocess.Popen(
             ['python', 'main.py'],
-            capture_output=True,
-            text=True,
-            timeout=1800  # 30 минут максимум
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
         )
         
-        if result.returncode == 0:
-            logger.info("✅ Парсинг завершен успешно")
-        else:
-            logger.error(f"❌ Парсинг завершился с ошибкой: {result.returncode}")
+        # Ждем завершения процесса с таймаутом
+        try:
+            stdout, stderr = current_parser_process.communicate(timeout=1800)  # 30 минут максимум
+            returncode = current_parser_process.returncode
+            
+            if returncode == 0:
+                logger.info("✅ Парсинг завершен успешно")
+            else:
+                logger.error(f"❌ Парсинг завершился с ошибкой: {returncode}")
+                await update.message.reply_text(
+                    f"❌ <b>Ошибка при выполнении парсинга</b>\n\n"
+                    f"Код ошибки: {returncode}\n"
+                    f"Проверьте логи для деталей.",
+                    parse_mode='HTML'
+                )
+        
+        except subprocess.TimeoutExpired:
+            # Убиваем процесс при таймауте
+            current_parser_process.kill()
+            logger.error("⏱️ Парсинг превысил лимит времени (30 мин)")
             await update.message.reply_text(
-                f"❌ <b>Ошибка при выполнении парсинга</b>\n\n"
-                f"Код ошибки: {result.returncode}\n"
-                f"Проверьте логи для деталей.",
+                "⏱️ <b>Превышено время выполнения</b>\n\n"
+                "Парсинг занял более 30 минут и был остановлен.\n"
+                "Проверьте логи для деталей.",
                 parse_mode='HTML'
             )
-    
-    except subprocess.TimeoutExpired:
-        logger.error("⏱️ Парсинг превысил лимит времени (30 мин)")
-        await update.message.reply_text(
-            "⏱️ <b>Превышено время выполнения</b>\n\n"
-            "Парсинг занял более 30 минут и был остановлен.\n"
-            "Проверьте логи для деталей.",
-            parse_mode='HTML'
-        )
     
     except Exception as e:
         logger.error(f"❌ Ошибка при запуске парсера: {e}")
@@ -142,6 +167,346 @@ async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     finally:
         parsing_in_progress = False
+        current_parser_process = None
+
+
+async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /stop - остановить парсинг."""
+    global parsing_in_progress, current_parser_process
+    
+    if not parsing_in_progress:
+        await update.message.reply_text(
+            "ℹ️ <b>Парсер не запущен</b>\n\n"
+            "Нечего останавливать. Используйте /status для проверки состояния.",
+            parse_mode='HTML'
+        )
+        return
+    
+    if current_parser_process is None:
+        await update.message.reply_text(
+            "⚠️ <b>Не удалось найти процесс парсера</b>\n\n"
+            "Возможно, он был запущен извне бота.",
+            parse_mode='HTML'
+        )
+        parsing_in_progress = False
+        return
+    
+    try:
+        logger.info(f"Остановка парсера запрошена пользователем {update.effective_user.id}")
+        
+        await update.message.reply_text(
+            "⏹️ <b>Останавливаю парсер...</b>",
+            parse_mode='HTML'
+        )
+        
+        # Пытаемся корректно завершить процесс
+        current_parser_process.terminate()
+        
+        # Даем 5 секунд на завершение
+        try:
+            current_parser_process.wait(timeout=5)
+            logger.info("✅ Парсер остановлен корректно")
+            
+            await update.message.reply_text(
+                "✅ <b>Парсер остановлен</b>\n\n"
+                "Процесс завершен корректно.",
+                parse_mode='HTML'
+            )
+        
+        except subprocess.TimeoutExpired:
+            # Если не завершился - убиваем принудительно
+            logger.warning("⚠️ Процесс не завершился за 5 секунд, принудительное завершение")
+            current_parser_process.kill()
+            current_parser_process.wait()
+            
+            await update.message.reply_text(
+                "✅ <b>Парсер остановлен принудительно</b>\n\n"
+                "Процесс был завершен жестко (kill signal).",
+                parse_mode='HTML'
+            )
+    
+    except Exception as e:
+        logger.error(f"❌ Ошибка при остановке парсера: {e}")
+        await update.message.reply_text(
+            f"❌ <b>Ошибка при остановке</b>\n\n{str(e)}",
+            parse_mode='HTML'
+        )
+    
+    finally:
+        parsing_in_progress = False
+        current_parser_process = None
+
+
+async def cron_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /cron_status - проверить статус автозапуска."""
+    try:
+        logger.info(f"Проверка статуса cron запрошена пользователем {update.effective_user.id}")
+        
+        # Проверяем есть ли активная задача в crontab
+        result = subprocess.run(
+            ['crontab', '-l'],
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode != 0:
+            await update.message.reply_text(
+                "⚠️ <b>Ошибка проверки cron</b>\n\n"
+                "Не удалось получить список задач crontab.",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Ищем строку с парсером
+        cron_lines = result.stdout.strip().split('\n')
+        parser_cron = None
+        is_active = False
+        
+        for line in cron_lines:
+            # Ищем по run_parser.sh или main.py в ozon_parser
+            if ('run_parser.sh' in line or 'main.py' in line) and 'ozon_parser' in line:
+                parser_cron = line
+                # Проверяем, закомментирована ли строка
+                is_active = not line.strip().startswith('#')
+                break
+        
+        if parser_cron is None:
+            status_message = (
+                "❌ <b>Автозапуск НЕ настроен</b>\n\n"
+                "Задача cron для парсера не найдена.\n"
+                "Используйте setup-cron.sh для настройки."
+            )
+        elif is_active:
+            status_message = (
+                "✅ <b>Автозапуск ВКЛЮЧЕН</b>\n\n"
+                "📋 Расписание:\n"
+                "<code>*/15 9-21 * * *</code>\n\n"
+                "⏰ Каждые 15 минут с 9:00 до 21:00 МСК\n"
+                "(48 запусков в день)\n\n"
+                "Используйте /cron_off для отключения."
+            )
+        else:
+            status_message = (
+                "⏸️ <b>Автозапуск ОТКЛЮЧЕН</b>\n\n"
+                "Задача cron существует, но закомментирована.\n\n"
+                "Используйте /cron_on для включения."
+            )
+        
+        # Добавляем информацию о последних запусках из лога
+        try:
+            log_result = subprocess.run(
+                ['tail', '-5', os.path.expanduser('~/ozon_parser/logs/cron.log')],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            
+            if log_result.returncode == 0 and log_result.stdout.strip():
+                status_message += "\n\n📝 <b>Последние запуски:</b>\n"
+                log_lines = log_result.stdout.strip().split('\n')
+                for line in log_lines[-3:]:  # Последние 3 строки
+                    if line.strip():
+                        status_message += f"<code>{line[:80]}</code>\n"
+        except:
+            pass  # Игнорируем ошибки чтения лога
+        
+        await update.message.reply_text(status_message, parse_mode='HTML')
+    
+    except Exception as e:
+        logger.error(f"❌ Ошибка при проверке статуса cron: {e}")
+        await update.message.reply_text(
+            f"❌ <b>Ошибка</b>\n\n{str(e)}",
+            parse_mode='HTML'
+        )
+
+
+async def cron_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /cron_on - включить автозапуск."""
+    try:
+        logger.info(f"Включение cron запрошено пользователем {update.effective_user.id}")
+        
+        await update.message.reply_text(
+            "⏰ <b>Включаю автозапуск...</b>",
+            parse_mode='HTML'
+        )
+        
+        # Получаем текущий crontab
+        result = subprocess.run(
+            ['crontab', '-l'],
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode != 0:
+            await update.message.reply_text(
+                "⚠️ <b>Ошибка</b>\n\n"
+                "Не удалось получить crontab. Возможно, cron не настроен.\n"
+                "Используйте setup-cron.sh для первоначальной настройки.",
+                parse_mode='HTML'
+            )
+            return
+        
+        cron_lines = result.stdout.strip().split('\n') if result.stdout.strip() else []
+        modified = False
+        new_cron_lines = []
+        
+        for line in cron_lines:
+            # Ищем по run_parser.sh или main.py в ozon_parser
+            if ('run_parser.sh' in line or 'main.py' in line) and 'ozon_parser' in line:
+                # Раскомментируем строку
+                if line.strip().startswith('#'):
+                    new_line = line.lstrip('#').lstrip()
+                    new_cron_lines.append(new_line)
+                    modified = True
+                    logger.info(f"Раскомментирована строка: {new_line}")
+                else:
+                    new_cron_lines.append(line)
+                    # Уже включено
+                    await update.message.reply_text(
+                        "ℹ️ <b>Автозапуск уже включен</b>\n\n"
+                        "Задача cron уже активна.",
+                        parse_mode='HTML'
+                    )
+                    return
+            else:
+                new_cron_lines.append(line)
+        
+        if not modified:
+            await update.message.reply_text(
+                "⚠️ <b>Задача не найдена</b>\n\n"
+                "Не найдена задача cron для парсера.\n"
+                "Используйте setup-cron.sh для настройки.",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Записываем обновленный crontab
+        new_crontab = '\n'.join(new_cron_lines) + '\n'
+        
+        write_result = subprocess.run(
+            ['crontab', '-'],
+            input=new_crontab,
+            text=True,
+            capture_output=True
+        )
+        
+        if write_result.returncode != 0:
+            await update.message.reply_text(
+                f"❌ <b>Ошибка записи crontab</b>\n\n{write_result.stderr}",
+                parse_mode='HTML'
+            )
+            return
+        
+        logger.info("✅ Cron включен успешно")
+        await update.message.reply_text(
+            "✅ <b>Автозапуск ВКЛЮЧЕН</b>\n\n"
+            "⏰ Парсер будет запускаться:\n"
+            "• Каждые 15 минут\n"
+            "• С 9:00 до 21:00 МСК\n"
+            "• 48 раз в день\n\n"
+            "Используйте /cron_status для проверки.",
+            parse_mode='HTML'
+        )
+    
+    except Exception as e:
+        logger.error(f"❌ Ошибка при включении cron: {e}")
+        await update.message.reply_text(
+            f"❌ <b>Ошибка</b>\n\n{str(e)}",
+            parse_mode='HTML'
+        )
+
+
+async def cron_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /cron_off - отключить автозапуск."""
+    try:
+        logger.info(f"Отключение cron запрошено пользователем {update.effective_user.id}")
+        
+        await update.message.reply_text(
+            "⏸️ <b>Отключаю автозапуск...</b>",
+            parse_mode='HTML'
+        )
+        
+        # Получаем текущий crontab
+        result = subprocess.run(
+            ['crontab', '-l'],
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode != 0:
+            await update.message.reply_text(
+                "⚠️ <b>Ошибка</b>\n\n"
+                "Не удалось получить crontab.",
+                parse_mode='HTML'
+            )
+            return
+        
+        cron_lines = result.stdout.strip().split('\n') if result.stdout.strip() else []
+        modified = False
+        new_cron_lines = []
+        
+        for line in cron_lines:
+            # Ищем по run_parser.sh или main.py в ozon_parser
+            if ('run_parser.sh' in line or 'main.py' in line) and 'ozon_parser' in line:
+                # Комментируем строку
+                if not line.strip().startswith('#'):
+                    new_line = f"# {line}"
+                    new_cron_lines.append(new_line)
+                    modified = True
+                    logger.info(f"Закомментирована строка: {new_line}")
+                else:
+                    new_cron_lines.append(line)
+                    # Уже отключено
+                    await update.message.reply_text(
+                        "ℹ️ <b>Автозапуск уже отключен</b>\n\n"
+                        "Задача cron уже неактивна.",
+                        parse_mode='HTML'
+                    )
+                    return
+            else:
+                new_cron_lines.append(line)
+        
+        if not modified:
+            await update.message.reply_text(
+                "⚠️ <b>Задача не найдена</b>\n\n"
+                "Не найдена задача cron для парсера.",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Записываем обновленный crontab
+        new_crontab = '\n'.join(new_cron_lines) + '\n'
+        
+        write_result = subprocess.run(
+            ['crontab', '-'],
+            input=new_crontab,
+            text=True,
+            capture_output=True
+        )
+        
+        if write_result.returncode != 0:
+            await update.message.reply_text(
+                f"❌ <b>Ошибка записи crontab</b>\n\n{write_result.stderr}",
+                parse_mode='HTML'
+            )
+            return
+        
+        logger.info("✅ Cron отключен успешно")
+        await update.message.reply_text(
+            "✅ <b>Автозапуск ОТКЛЮЧЕН</b>\n\n"
+            "⏸️ Парсер больше не будет запускаться автоматически.\n\n"
+            "Используйте:\n"
+            "• /parse - для ручного запуска\n"
+            "• /cron_on - для повторного включения автозапуска",
+            parse_mode='HTML'
+        )
+    
+    except Exception as e:
+        logger.error(f"❌ Ошибка при отключении cron: {e}")
+        await update.message.reply_text(
+            f"❌ <b>Ошибка</b>\n\n{str(e)}",
+            parse_mode='HTML'
+        )
 
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -154,6 +519,10 @@ async def post_init(application: Application):
     commands = [
         BotCommand("start", "🏠 Главное меню"),
         BotCommand("parse", "🚀 Запустить парсинг"),
+        BotCommand("stop", "⏹️ Остановить парсинг"),
+        BotCommand("cron_on", "⏰ Включить автозапуск"),
+        BotCommand("cron_off", "⏸️ Отключить автозапуск"),
+        BotCommand("cron_status", "📋 Статус автозапуска"),
         BotCommand("status", "📊 Статус парсера"),
         BotCommand("help", "❓ Справка"),
     ]
@@ -173,12 +542,16 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("parse", parse_command))
+    application.add_handler(CommandHandler("stop", stop_command))
+    application.add_handler(CommandHandler("cron_status", cron_status_command))
+    application.add_handler(CommandHandler("cron_on", cron_on_command))
+    application.add_handler(CommandHandler("cron_off", cron_off_command))
     
     # Добавляем обработчик ошибок
     application.add_error_handler(error_handler)
     
     logger.info("✅ Бот запущен и готов к работе")
-    logger.info("Доступные команды: /start, /help, /status, /parse")
+    logger.info("Доступные команды: /start, /help, /status, /parse, /stop, /cron_on, /cron_off, /cron_status")
     
     # Запускаем бота
     application.run_polling(allowed_updates=Update.ALL_TYPES)
