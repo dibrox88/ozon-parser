@@ -333,7 +333,8 @@ def main():
                     
                     if all_orders_data:
                         total_items = sum(order.get('items_count', 0) for order in all_orders_data)
-                        total_amount = sum(order.get('total_amount', 0) for order in all_orders_data)
+                        # Исправлено: проверяем на None перед сложением
+                        total_amount = sum(order.get('total_amount') or 0 for order in all_orders_data)
                         
                         summary_message += f"📦 <b>Всего товаров:</b> {total_items} шт\n"
                         summary_message += f"💰 <b>Общая сумма:</b> {total_amount:,.2f} ₽\n\n"

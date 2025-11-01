@@ -1,5 +1,6 @@
 """Модуль парсинга заказов Ozon."""
 import time
+import random
 import re
 from datetime import datetime
 from pathlib import Path
@@ -38,7 +39,8 @@ class OzonParser:
         """
         timestamp = int(time.time())
         filename = f"{Config.SCREENSHOTS_DIR}/{name}_{timestamp}.png"
-        self.page.screenshot(path=filename, full_page=True)
+        # full_page=False для мобильной вёрстки (иначе слишком большой для Telegram)
+        self.page.screenshot(path=filename, full_page=False)
         logger.info(f"Скриншот сохранен: {filename}")
         return filename
     
@@ -528,13 +530,22 @@ class OzonParser:
         try:
             logger.info(f"📄 Парсим детали заказа {order_number}")
             
+            # АНТИДЕТЕКТ: Случайная задержка 2-5 секунд перед каждым запросом
+            delay = random.uniform(2.0, 5.0)
+            logger.debug(f"⏰ Задержка {delay:.1f}с перед переходом на страницу заказа")
+            time.sleep(delay)
+            
             # Переходим на страницу заказа
             order_url = f"https://www.ozon.ru/my/orderdetails/?order={order_number}"
             logger.info(f"Переходим на: {order_url}")
             
             self.page.goto(order_url, timeout=Config.NAVIGATION_TIMEOUT)
             self.page.wait_for_load_state('networkidle', timeout=Config.DEFAULT_TIMEOUT)
-            time.sleep(3)
+            
+            # АНТИДЕТЕКТ: Дополнительная задержка после загрузки 1-3 секунды
+            post_delay = random.uniform(1.0, 3.0)
+            logger.debug(f"⏰ Задержка {post_delay:.1f}с после загрузки страницы")
+            time.sleep(post_delay)
             
             # Проверяем на блокировку
             page_title = self.page.title()
