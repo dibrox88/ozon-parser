@@ -82,6 +82,47 @@ class SessionManager:
             logger.error(f"❌ Ошибка загрузки cookies: {e}")
             return False
     
+    def save_cookies_from_context(self, context: BrowserContext) -> bool:
+        """
+        Сохранить обновлённые cookies из контекста обратно в файл.
+        Это позволяет сохранить актуальные токены после успешного парсинга.
+        
+        Args:
+            context: Контекст браузера Playwright
+            
+        Returns:
+            True если cookies успешно сохранены
+        """
+        try:
+            logger.info("💾 Сохраняем обновлённые cookies...")
+            
+            # Получаем все cookies из контекста
+            cookies = context.cookies()
+            
+            if not cookies:
+                logger.warning("⚠️ Нет cookies для сохранения")
+                return False
+            
+            # Сохраняем в файл
+            with open(self.cookies_file, 'w', encoding='utf-8') as f:
+                json.dump(cookies, f, indent=2, ensure_ascii=False)
+            
+            logger.success(f"✅ Сохранено {len(cookies)} обновлённых cookies в {self.cookies_file}")
+            
+            # Проверяем важные cookies
+            important = ['__Secure-access-token', '__Secure-refresh-token', 'xcid']
+            cookie_names = [c['name'] for c in cookies]
+            found_important = [name for name in important if name in cookie_names]
+            
+            if found_important:
+                logger.success(f"✅ Обновлены токены: {', '.join(found_important)}")
+            
+            return True
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка сохранения cookies: {e}")
+            return False
+    
     def session_exists(self) -> bool:
         """
         Проверить наличие сохраненной сессии.
