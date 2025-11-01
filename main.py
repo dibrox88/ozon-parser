@@ -35,7 +35,8 @@ from session_manager import SessionManager
 
 def setup_browser_context(browser: Browser) -> BrowserContext:
     """
-    Настройка контекста браузера с улучшенными anti-detection параметрами.
+    Настройка контекста браузера с мобильной эмуляцией.
+    Strategy5_MobileEmulation - единственная рабочая стратегия на сервере.
     
     Args:
         browser: Браузер Playwright
@@ -44,25 +45,22 @@ def setup_browser_context(browser: Browser) -> BrowserContext:
         Настроенный контекст
     """
     context = browser.new_context(
-        viewport={'width': 1920, 'height': 1080},
-        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        viewport={'width': 412, 'height': 915},
+        user_agent='Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36',
         locale='ru-RU',
         timezone_id='Europe/Moscow',
-        java_script_enabled=True,
-        ignore_https_errors=True  # Игнорирует SSL ошибки
+        has_touch=True,
+        is_mobile=True,
+        device_scale_factor=3.5,
     )
     
-    # Маскировка автоматизации (резервный слой поверх playwright-stealth)
+    # Маскировка автоматизации (минимальный stealth для мобильной эмуляции)
     context.add_init_script("""
         Object.defineProperty(navigator, 'webdriver', { 
             get: () => undefined 
         });
-        
-        Object.defineProperty(navigator, 'plugins', { 
-            get: () => [1, 2, 3, 4, 5] 
-        });
     """)
-    logger.debug("✅ Добавлен init_script для маскировки автоматизации")
+    logger.debug("✅ Контекст с мобильной эмуляцией (Strategy5) создан")
     
     return context
 

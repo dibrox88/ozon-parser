@@ -154,24 +154,23 @@ class SessionManager:
             
             logger.info("Загружаем сохраненную сессию...")
             
-            # Загружаем контекст из файла
+            # Загружаем контекст из файла с настройками мобильной эмуляции
+            # (Strategy5_MobileEmulation - единственная рабочая стратегия на сервере)
             context = browser.new_context(
                 storage_state=str(self.state_file),
-                viewport={'width': 1920, 'height': 1080},
-                user_agent=Config.USER_AGENT,
+                viewport={'width': 412, 'height': 915},
+                user_agent='Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36',
                 locale='ru-RU',
                 timezone_id='Europe/Moscow',
-                geolocation={'longitude': 37.6173, 'latitude': 55.7558},
-                permissions=['geolocation'],
-                extra_http_headers={
-                    'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-                }
+                has_touch=True,
+                is_mobile=True,
+                device_scale_factor=3.5,
             )
             
             # Добавляем stealth скрипты
             self._add_stealth_scripts(context)
             
-            logger.info("✅ Сессия успешно загружена")
+            logger.info("✅ Сессия успешно загружена (Mobile Emulation)")
             return context
             
         except Exception as e:
