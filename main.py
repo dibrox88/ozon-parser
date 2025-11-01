@@ -2,7 +2,7 @@
 import sys
 import os
 from pathlib import Path
-from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
+from playwright.sync_api import sync_playwright
 from loguru import logger
 
 try:
@@ -33,47 +33,14 @@ from notifier import sync_send_message
 from session_manager import SessionManager
 
 
-def setup_browser_context(browser: Browser) -> BrowserContext:
-    """
-    Настройка контекста браузера с Desktop Linux UA.
-    Strategy #3 (Desktop with Linux UA) - протестирована и работает стабильно.
-    
-    Args:
-        browser: Браузер Playwright
-        
-    Returns:
-        Настроенный контекст
-    """
-    context = browser.new_context(
-        viewport={'width': 1920, 'height': 1080},
-        user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        locale='ru-RU',
-        timezone_id='Europe/Moscow',
-        has_touch=False,
-        is_mobile=False,
-        device_scale_factor=1,
-    )
-    
-    # Маскировка автоматизации
-    context.add_init_script("""
-        Object.defineProperty(navigator, 'webdriver', { 
-            get: () => undefined 
-        });
-    """)
-    logger.debug("✅ Контекст с Desktop Linux UA (Strategy #3) создан")
-    
-    return context
-
-
 def main():
     """Главная функция."""
     try:
         # Проверяем конфигурацию
-        logger.info("Проверка конфигурации...")
         Config.validate()
         
-        logger.info("Запуск Ozon Parser")
-        sync_send_message("🚀 <b>Ozon Parser запущен</b>\n\nНачинаем работу...")
+        logger.info("Запуск Ozon Parser v2.2.0 (Strategy #3: Desktop Linux UA)")
+        sync_send_message("🚀 <b>Ozon Parser v2.2.0</b>\n\n🖥️ Strategy #3: Desktop Linux 1920x1080\n✅ Обход защиты активен")
         
         # Инициализируем менеджер сессий
         session_manager = SessionManager()
@@ -82,19 +49,15 @@ def main():
         with sync_playwright() as p:
             logger.info("Запуск браузера...")
             
-            # Улучшенная конфигурация браузера (из парсера Amvera)
-            logger.info("🌐 Запускаем браузер с anti-detection настройками...")
+            # Strategy #3: Desktop with Linux UA (ПРОТЕСТИРОВАНО - РАБОТАЕТ!)
+            logger.info("🌐 Запускаем браузер (Strategy #3: Desktop Linux UA)...")
             browser = p.chromium.launch(
                 headless=Config.HEADLESS,
                 args=[
-                    '--start-maximized',
-                    '--disable-blink-features=AutomationControlled',  # Скрывает автоматизацию
-                    '--disable-dev-shm-usage',                        # Для Docker
-                    '--no-sandbox',                                   # Для Docker
-                    '--disable-web-security',                         # Убирает некоторые проверки
-                    '--disable-features=VizDisplayCompositor'         # Меньше GPU проверок
-                ],
-                slow_mo=50  # Замедляет действия (более человечно)
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                ]
             )
             
             # Пробуем загрузить сохраненную сессию или экспортированные cookies
@@ -166,8 +129,8 @@ def main():
             #         context = None
             # ========== КОНЕЦ ВРЕМЕННОГО ОТКЛЮЧЕНИЯ ==========
             
-            logger.info("🧪 ТЕСТОВЫЙ РЕЖИМ: Cookies отключены, запускаем БЕЗ авторизации")
-            sync_send_message("🧪 <b>Тестовый режим БЕЗ cookies</b>\n\nПроверяем работу мобильной эмуляции...")
+            logger.info("🖥️ Используем Strategy #3 (Desktop Linux UA)")
+            sync_send_message("🖥️ <b>Desktop Linux UA</b>\n\nРазрешение: 1920x1080\nТестирование обхода защиты...")
             
             # ПРИОРИТЕТ 2: Пытаемся загрузить старую Playwright сессию
             if session_manager.session_exists():
@@ -227,7 +190,23 @@ def main():
             
             # Если сессии нет или она не работает - создаем новый контекст и авторизуемся
             if context is None:
-                context = setup_browser_context(browser)
+                # Desktop с Linux User-Agent (Strategy #3 - РАБОТАЕТ!)
+                context = browser.new_context(
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    locale='ru-RU',
+                    timezone_id='Europe/Moscow',
+                    has_touch=False,
+                    is_mobile=False,
+                    device_scale_factor=1,
+                )
+                
+                context.add_init_script("""
+                    Object.defineProperty(navigator, 'webdriver', {
+                        get: () => undefined
+                    });
+                """)
+                
                 page = context.new_page()
                 
                 # Применяем stealth для обхода антибот защиты
