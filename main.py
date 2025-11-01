@@ -35,8 +35,8 @@ from session_manager import SessionManager
 
 def setup_browser_context(browser: Browser) -> BrowserContext:
     """
-    Настройка контекста браузера с мобильной эмуляцией.
-    Strategy5_MobileEmulation - единственная рабочая стратегия на сервере.
+    Настройка контекста браузера с Desktop Linux UA.
+    Strategy #3 (Desktop with Linux UA) - протестирована и работает стабильно.
     
     Args:
         browser: Браузер Playwright
@@ -45,22 +45,22 @@ def setup_browser_context(browser: Browser) -> BrowserContext:
         Настроенный контекст
     """
     context = browser.new_context(
-        viewport={'width': 412, 'height': 915},
-        user_agent='Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36',
+        viewport={'width': 1920, 'height': 1080},
+        user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         locale='ru-RU',
         timezone_id='Europe/Moscow',
-        has_touch=True,
-        is_mobile=True,
-        device_scale_factor=3.5,
+        has_touch=False,
+        is_mobile=False,
+        device_scale_factor=1,
     )
     
-    # Маскировка автоматизации (минимальный stealth для мобильной эмуляции)
+    # Маскировка автоматизации
     context.add_init_script("""
         Object.defineProperty(navigator, 'webdriver', { 
             get: () => undefined 
         });
     """)
-    logger.debug("✅ Контекст с мобильной эмуляцией (Strategy5) создан")
+    logger.debug("✅ Контекст с Desktop Linux UA (Strategy #3) создан")
     
     return context
 
