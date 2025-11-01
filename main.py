@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 from loguru import logger
+import fcntl  # Для блокировки файла (Unix)
+import time
 
 try:
     # playwright-stealth v2.0.0
@@ -35,7 +37,44 @@ from session_manager import SessionManager
 
 def main():
     """Главная функция."""
+    # Путь к файлу-флагу блокировки
+    lock_file_path = Path("logs/parser.lock")
+    lock_file_path.parent.mkdir(exist_ok=True)
+    
     try:
+        # Пытаемся создать файл-флаг блокировки
+        lock_file = open(lock_file_path, 'w')
+        
+        try:
+            # Пытаемся получить эксклюзивную блокировку (только для Unix)
+            if sys.platform != 'win32':
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            else:
+                # Для Windows - просто проверяем существование файла
+                if lock_file_path.exists():
+                    # Проверяем, не устарел ли lock (более 2 часов)
+                    lock_age = time.time() - lock_file_path.stat().st_mtime
+                    if lock_age < 7200:  # 2 часа
+                        logger.warning("⚠️ Парсер уже запущен! Обнаружен активный lock файл.")
+                        sync_send_message("⚠️ <b>Парсер уже запущен</b>\n\nДождитесь завершения текущего процесса или используйте /stop")
+                        sys.exit(0)
+                    else:
+                        logger.warning(f"⚠️ Найден устаревший lock файл (возраст: {lock_age/60:.1f} мин). Удаляем...")
+                        lock_file_path.unlink()
+            
+            # Записываем PID в lock файл
+            lock_file.write(str(os.getpid()))
+            lock_file.flush()
+            
+            logger.info(f"🔒 Lock файл создан: {lock_file_path}")
+            
+        except (IOError, OSError) as e:
+            logger.warning(f"⚠️ Парсер уже запущен! Lock файл заблокирован: {e}")
+            sync_send_message("⚠️ <b>Парсер уже запущен</b>\n\nДождитесь завершения текущего процесса или используйте /stop")
+            lock_file.close()
+            sys.exit(0)
+        
+        # Основная логика парсера
         # Проверяем конфигурацию
         Config.validate()
         
@@ -457,9 +496,9 @@ def main():
                 context.close()
                 browser.close()
         
-        logger.info("Работа завершена успешно")
-        sync_send_message("✅ <b>Работа завершена</b>")
-        
+            logger.info("Работа завершена успешно")
+            sync_send_message("✅ <b>Работа завершена</b>")
+    
     except ValueError as e:
         logger.error(f"Ошибка конфигурации: {e}")
         print(f"\n❌ Ошибка конфигурации:\n{e}\n")
@@ -475,6 +514,17 @@ def main():
         logger.exception(f"Критическая ошибка: {e}")
         sync_send_message(f"❌ <b>Критическая ошибка</b>\n\n{str(e)}")
         sys.exit(1)
+    
+    finally:
+        # Удаляем lock файл при любом завершении
+        try:
+            if 'lock_file' in locals():
+                lock_file.close()
+            if lock_file_path.exists():
+                lock_file_path.unlink()
+                logger.info("🔓 Lock файл удалён")
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось удалить lock файл: {e}")
 
 
 if __name__ == '__main__':

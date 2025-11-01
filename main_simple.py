@@ -6,6 +6,9 @@ import sys
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 from loguru import logger
+import fcntl  # Для блокировки файла (Unix)
+import time
+import os
 
 # Настройка логирования
 Path('logs').mkdir(exist_ok=True)
@@ -25,9 +28,46 @@ from notifier import sync_send_message
 
 def main():
     """Главная функция - упрощённая версия."""
+    # Путь к файлу-флагу блокировки
+    lock_file_path = Path("logs/parser_simple.lock")
+    lock_file_path.parent.mkdir(exist_ok=True)
+    
     try:
-        logger.info("🚀 Запуск Ozon Parser (Strategy #3: Desktop with Linux UA)")
-        sync_send_message("🚀 <b>Ozon Parser запущен</b>\n\n�️ Strategy #3: Desktop Linux 1920x1080...")
+        # Пытаемся создать файл-флаг блокировки
+        lock_file = open(lock_file_path, 'w')
+        
+        try:
+            # Пытаемся получить эксклюзивную блокировку (только для Unix)
+            if sys.platform != 'win32':
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            else:
+                # Для Windows - просто проверяем существование файла
+                if lock_file_path.exists():
+                    # Проверяем, не устарел ли lock (более 2 часов)
+                    lock_age = time.time() - lock_file_path.stat().st_mtime
+                    if lock_age < 7200:  # 2 часа
+                        logger.warning("⚠️ Парсер уже запущен! Обнаружен активный lock файл.")
+                        sync_send_message("⚠️ <b>Парсер уже запущен</b>\n\nДождитесь завершения текущего процесса")
+                        sys.exit(0)
+                    else:
+                        logger.warning(f"⚠️ Найден устаревший lock файл (возраст: {lock_age/60:.1f} мин). Удаляем...")
+                        lock_file_path.unlink()
+            
+            # Записываем PID в lock файл
+            lock_file.write(str(os.getpid()))
+            lock_file.flush()
+            
+            logger.info(f"� Lock файл создан: {lock_file_path}")
+            
+        except (IOError, OSError) as e:
+            logger.warning(f"⚠️ Парсер уже запущен! Lock файл заблокирован: {e}")
+            sync_send_message("⚠️ <b>Парсер уже запущен</b>\n\nДождитесь завершения текущего процесса")
+            lock_file.close()
+            sys.exit(0)
+        
+        # Основная логика парсера
+        logger.info("�🚀 Запуск Ozon Parser (Strategy #3: Desktop with Linux UA)")
+        sync_send_message("🚀 <b>Ozon Parser запущен</b>\n\n🖥️ Strategy #3: Desktop Linux 1920x1080...")
         
         with sync_playwright() as p:
             # Strategy #3: Desktop with Linux UA (ПРОТЕСТИРОВАНО - РАБОТАЕТ!)
@@ -130,7 +170,7 @@ def main():
                 sync_send_message("⚠️ Заказы не найдены")
             
             browser.close()
-            
+    
     except KeyboardInterrupt:
         logger.info("❌ Прервано пользователем")
         sync_send_message("❌ Парсинг прерван пользователем")
@@ -140,6 +180,17 @@ def main():
         logger.exception(f"❌ Критическая ошибка: {e}")
         sync_send_message(f"❌ <b>Критическая ошибка:</b>\n\n{str(e)}")
         sys.exit(1)
+    
+    finally:
+        # Удаляем lock файл при любом завершении
+        try:
+            if 'lock_file' in locals():
+                lock_file.close()
+            if lock_file_path.exists():
+                lock_file_path.unlink()
+                logger.info("🔓 Lock файл удалён")
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось удалить lock файл: {e}")
 
 
 if __name__ == "__main__":
