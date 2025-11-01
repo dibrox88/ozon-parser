@@ -103,69 +103,74 @@ def main():
             needs_auth = True
             cookies_failed = False  # Флаг: пытались ли использовать cookies и они не сработали
             
+            # ========== ВРЕМЕННО ОТКЛЮЧЕНО ДЛЯ ТЕСТИРОВАНИЯ ==========
             # ПРИОРИТЕТ 1: Проверяем наличие экспортированных cookies (обходит блокировку!)
-            if session_manager.cookies_exist():
-                logger.info("🍪 Найдены экспортированные cookies! Используем их для обхода блокировки...")
-                sync_send_message("🍪 Используем cookies из обычного браузера...")
-                
-                # Создаем новый контекст
-                context = setup_browser_context(browser)
-                
-                # Загружаем cookies
-                if session_manager.load_cookies_to_context(context):
-                    page = context.new_page()
-                    
-                    # Применяем stealth для обхода антибот защиты
-                    if STEALTH_AVAILABLE and stealth:
-                        stealth.apply_stealth_sync(page)
-                        logger.info("✅ Stealth применен к странице")
-                    
-                    page.set_default_timeout(Config.DEFAULT_TIMEOUT)
-                    page.set_default_navigation_timeout(Config.NAVIGATION_TIMEOUT)
-                    
-                    try:
-                        # Пробуем открыть страницу заказов
-                        logger.info("📍 Проверяем авторизацию с cookies...")
-                        page.goto(Config.OZON_ORDERS_URL, timeout=30000)
-                        page.wait_for_load_state('networkidle', timeout=15000)
-                        
-                        # Проверяем, авторизованы ли мы
-                        auth = OzonAuth(page)
-                        if auth.verify_login():
-                            logger.success("✅ Авторизация с cookies успешна! Блокировка обойдена!")
-                            sync_send_message("✅ Вход выполнен через cookies! Парсинг начинается...")
-                            needs_auth = False
-                        else:
-                            logger.warning("⚠️ Cookies устарели, требуется повторный экспорт")
-                            sync_send_message("⚠️ Cookies устарели. Экспортируйте новые: python export_cookies.py")
-                            cookies_failed = True  # Отмечаем что cookies не сработали, но page ещё открыт
-                            # НЕ закрываем context и page - переиспользуем их для авторизации
-                    
-                    except RuntimeError as e:
-                        # Блокировка обнаружена - немедленно останавливаем
-                        if "Блокировка Ozon" in str(e):
-                            logger.error(f"🛑 ПАРСИНГ ОСТАНОВЛЕН: {e}")
-                            if context:
-                                context.close()
-                            browser.close()
-                            sys.exit(1)
-                        else:
-                            raise  # Другие RuntimeError пробрасываем
-                    
-                    except Exception as e:
-                        logger.warning(f"⚠️ Cookies не сработали: {e}")
-                        sync_send_message(f"⚠️ Cookies не сработали. Попробуйте экспортировать заново.")
-                        if context:
-                            context.close()
-                        context = None
-                else:
-                    logger.error("❌ Не удалось загрузить cookies")
-                    if context:
-                        context.close()
-                    context = None
+            # if session_manager.cookies_exist():
+            #     logger.info("🍪 Найдены экспортированные cookies! Используем их для обхода блокировки...")
+            #     sync_send_message("🍪 Используем cookies из обычного браузера...")
+            #     
+            #     # Создаем новый контекст
+            #     context = setup_browser_context(browser)
+            #     
+            #     # Загружаем cookies
+            #     if session_manager.load_cookies_to_context(context):
+            #         page = context.new_page()
+            #         
+            #         # Применяем stealth для обхода антибот защиты
+            #         if STEALTH_AVAILABLE and stealth:
+            #             stealth.apply_stealth_sync(page)
+            #             logger.info("✅ Stealth применен к странице")
+            #         
+            #         page.set_default_timeout(Config.DEFAULT_TIMEOUT)
+            #         page.set_default_navigation_timeout(Config.NAVIGATION_TIMEOUT)
+            #         
+            #         try:
+            #             # Пробуем открыть страницу заказов
+            #             logger.info("📍 Проверяем авторизацию с cookies...")
+            #             page.goto(Config.OZON_ORDERS_URL, timeout=30000)
+            #             page.wait_for_load_state('networkidle', timeout=15000)
+            #             
+            #             # Проверяем, авторизованы ли мы
+            #             auth = OzonAuth(page)
+            #             if auth.verify_login():
+            #                 logger.success("✅ Авторизация с cookies успешна! Блокировка обойдена!")
+            #                 sync_send_message("✅ Вход выполнен через cookies! Парсинг начинается...")
+            #                 needs_auth = False
+            #             else:
+            #                 logger.warning("⚠️ Cookies устарели, требуется повторный экспорт")
+            #                 sync_send_message("⚠️ Cookies устарели. Экспортируйте новые: python export_cookies.py")
+            #                 cookies_failed = True  # Отмечаем что cookies не сработали, но page ещё открыт
+            #                 # НЕ закрываем context и page - переиспользуем их для авторизации
+            #         
+            #         except RuntimeError as e:
+            #             # Блокировка обнаружена - немедленно останавливаем
+            #             if "Блокировка Ozon" in str(e):
+            #                 logger.error(f"🛑 ПАРСИНГ ОСТАНОВЛЕН: {e}")
+            #                 if context:
+            #                     context.close()
+            #                 browser.close()
+            #                 sys.exit(1)
+            #             else:
+            #                 raise  # Другие RuntimeError пробрасываем
+            #         
+            #         except Exception as e:
+            #             logger.warning(f"⚠️ Cookies не сработали: {e}")
+            #             sync_send_message(f"⚠️ Cookies не сработали. Попробуйте экспортировать заново.")
+            #             if context:
+            #                 context.close()
+            #             context = None
+            #     else:
+            #         logger.error("❌ Не удалось загрузить cookies")
+            #         if context:
+            #             context.close()
+            #         context = None
+            # ========== КОНЕЦ ВРЕМЕННОГО ОТКЛЮЧЕНИЯ ==========
+            
+            logger.info("🧪 ТЕСТОВЫЙ РЕЖИМ: Cookies отключены, запускаем БЕЗ авторизации")
+            sync_send_message("🧪 <b>Тестовый режим БЕЗ cookies</b>\n\nПроверяем работу мобильной эмуляции...")
             
             # ПРИОРИТЕТ 2: Пытаемся загрузить старую Playwright сессию
-            elif session_manager.session_exists():
+            if session_manager.session_exists():
                 logger.info("🔄 Пробуем загрузить сохраненную сессию...")
                 sync_send_message("🔄 Найдена сохраненная сессия. Проверяем...")
                 
