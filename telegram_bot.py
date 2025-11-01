@@ -178,8 +178,9 @@ async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         # Запускаем парсер как subprocess в фоновом режиме
+        # ИСПОЛЬЗУЕМ main_simple.py - упрощённая версия с Strategy #3 (Desktop Linux UA)
         current_parser_process = subprocess.Popen(
-            ['python', 'main.py'],
+            ['python', 'main_simple.py'],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True

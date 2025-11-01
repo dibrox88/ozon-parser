@@ -1,17 +1,21 @@
 """
 Тест: можно ли открыть Ozon БЕЗ cookies с мобильной эмуляцией?
+Отправляет скриншоты в Telegram для диагностики.
 """
+import os
 from playwright.sync_api import sync_playwright
 from loguru import logger
 from config import Config
+from notifier import sync_send_photo, sync_send_message
 
 def main():
     """Тестируем доступ к Ozon без cookies."""
     logger.info("🧪 Тест: Ozon БЕЗ cookies (мобильная эмуляция)")
+    sync_send_message("🧪 <b>Тест БЕЗ cookies</b>\n\nПроверяем мобильную эмуляцию на сервере...")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(
-            headless=False,  # Показываем браузер
+            headless=True,  # На сервере без GUI
             args=[
                 '--disable-blink-features=AutomationControlled',
                 '--disable-dev-shm-usage',
@@ -51,9 +55,11 @@ def main():
         if "Доступ ограничен" in content:
             logger.error("❌ БЛОКИРОВКА на главной странице!")
             page.screenshot(path="screenshots/no_cookies_blocked.png")
+            sync_send_photo("screenshots/no_cookies_blocked.png", "❌ <b>Блокировка на главной</b>\n\nTitle: " + title)
         else:
             logger.success("✅ Главная страница открылась БЕЗ блокировки!")
             page.screenshot(path="screenshots/no_cookies_main.png")
+            sync_send_photo("screenshots/no_cookies_main.png", "✅ <b>Главная страница OK</b>\n\nTitle: " + title)
         
         # 2. Пытаемся открыть страницу "Мои заказы"
         logger.info("\n📍 Пробуем открыть 'Мои заказы' без авторизации...")
@@ -67,9 +73,11 @@ def main():
         if "Доступ ограничен" in content2:
             logger.error("❌ БЛОКИРОВКА на странице заказов!")
             page.screenshot(path="screenshots/no_cookies_orders_blocked.png")
+            sync_send_photo("screenshots/no_cookies_orders_blocked.png", "❌ <b>Блокировка на заказах</b>\n\nTitle: " + title2)
         elif "Войти" in content2 or "Войдите" in content2:
             logger.info("ℹ️ Требуется авторизация (редирект на вход)")
             page.screenshot(path="screenshots/no_cookies_orders_login.png")
+            sync_send_photo("screenshots/no_cookies_orders_login.png", "ℹ️ <b>Страница входа</b>\n\nTitle: " + title2 + "\nURL: " + page.url)
             
             # Проверяем куда нас перенаправило
             current_url = page.url
@@ -103,8 +111,7 @@ def main():
         logger.success("✅ Тест завершён! Проверьте скриншоты в папке screenshots/")
         logger.info("="*60)
         
-        input("\nНажмите Enter чтобы закрыть браузер...")
-        
+        # Автоматическое закрытие (без input для сервера)
         browser.close()
 
 if __name__ == "__main__":
