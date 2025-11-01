@@ -7,6 +7,7 @@ import asyncio
 import subprocess
 import os
 import signal
+import io
 from datetime import datetime
 from telegram import Update, BotCommand
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -27,6 +28,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/parse - Запустить парсинг вручную\n"
         "/stop - Остановить парсинг\n"
         "/status - Показать статус парсера\n"
+        "/test_antidetect - 🧪 Тест обхода блокировок\n"
         "/cron_on - ⏰ Включить автозапуск\n"
         "/cron_off - ⏸️ Отключить автозапуск\n"
         "/cron_status - 📋 Статус автозапуска\n"
@@ -47,6 +49,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>/stop</b> - Остановить текущий парсинг\n"
         "  • Принудительно завершает работающий процесс\n"
         "  • Закрывает браузер и освобождает ресурсы\n\n"
+        "<b>/test_antidetect</b> - 🧪 Тестирование обхода блокировок\n"
+        "  • Проверяет 7 различных методов обхода защиты\n"
+        "  • Отправляет результаты с рекомендациями\n"
+        "  • Помогает найти рабочую стратегию\n\n"
         "<b>/cron_on</b> - ⏰ Включить автоматический запуск\n"
         "  • Активирует cron-задачу\n"
         "  • Парсер будет запускаться каждые 15 мин (9:00-21:00)\n\n"
@@ -62,7 +68,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>/help</b> - Показать эту справку\n\n"
         "⚠️ <b>Важно:</b>\n"
         "• Парсер нельзя запустить, если он уже работает\n"
-        "• Cookies нужно обновлять каждые 3-7 дней"
+        "• Cookies нужно обновлять каждые 3-7 дней\n"
+        "• При блокировках используйте /test_antidetect"
     )
     await update.message.reply_text(help_message, parse_mode='HTML')
 
@@ -171,6 +178,128 @@ async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /stop - остановить парсинг."""
+    global parsing_in_progress, current_parser_process
+    
+    if not parsing_in_progress:
+        await update.message.reply_text(
+            "ℹ️ <b>Парсер не запущен</b>\n\n"
+            "Нечего останавливать. Используйте /status для проверки состояния.",
+            parse_mode='HTML'
+        )
+        return
+    
+    if current_parser_process is None:
+        await update.message.reply_text(
+            "⚠️ <b>Не удалось найти процесс парсера</b>\n\n"
+            "Возможно, он был запущен извне бота.",
+            parse_mode='HTML'
+        )
+        parsing_in_progress = False
+        return
+    
+    try:
+        logger.info(f"Остановка парсера запрошена пользователем {update.effective_user.id}")
+        
+        await update.message.reply_text(
+            "⏹️ <b>Останавливаю парсер...</b>",
+            parse_mode='HTML'
+        )
+        
+        # Пытаемся корректно завершить процесс
+        current_parser_process.terminate()
+        
+        # Даем 5 секунд на завершение
+        try:
+            current_parser_process.wait(timeout=5)
+            logger.info("✅ Парсер остановлен корректно")
+            
+            await update.message.reply_text(
+                "✅ <b>Парсер остановлен</b>\n\n"
+                "Процесс завершен корректно.",
+                parse_mode='HTML'
+            )
+        
+        except subprocess.TimeoutExpired:
+            # Если не завершился - убиваем принудительно
+            logger.warning("⚠️ Процесс не завершился за 5 секунд, принудительное завершение")
+            current_parser_process.kill()
+            current_parser_process.wait()
+            
+            await update.message.reply_text(
+                "✅ <b>Парсер остановлен принудительно</b>\n\n"
+                "Процесс был завершен жестко (kill signal).",
+                parse_mode='HTML'
+            )
+    
+    except Exception as e:
+        logger.error(f"❌ Ошибка при остановке парсера: {e}")
+        await update.message.reply_text(
+            f"❌ <b>Ошибка при остановке</b>\n\n{str(e)}",
+            parse_mode='HTML'
+        )
+    
+    finally:
+        parsing_in_progress = False
+        current_parser_process = None
+
+
+async def test_antidetect_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /test_antidetect - тестирование стратегий обхода блокировок."""
+    try:
+        logger.info(f"Тестирование антидетекта запрошено пользователем {update.effective_user.id}")
+        
+        await update.message.reply_text(
+            "🧪 <b>Запускаю тестирование антидетект стратегий...</b>\n\n"
+            "Это займет 1-2 минуты.\n"
+            "Протестирую 7 различных методов обхода блокировок.",
+            parse_mode='HTML'
+        )
+        
+        # Запускаем тестирование в subprocess
+        result = subprocess.run(
+            ['python', 'test_antidetect.py'],
+            capture_output=True,
+            text=True,
+            timeout=180  # 3 минуты максимум
+        )
+        
+        if result.returncode == 0:
+            # Успешно протестировано
+            logger.info("✅ Тестирование антидетекта завершено")
+            
+            # Отправляем результаты
+            if result.stdout:
+                await update.message.reply_text(
+                    f"✅ <b>Тестирование завершено!</b>\n\n<pre>{result.stdout}</pre>",
+                    parse_mode='HTML'
+                )
+        else:
+            logger.error(f"❌ Ошибка тестирования: {result.returncode}")
+            await update.message.reply_text(
+                f"❌ <b>Ошибка при тестировании</b>\n\n"
+                f"Код ошибки: {result.returncode}\n"
+                f"Проверьте логи для деталей.",
+                parse_mode='HTML'
+            )
+    
+    except subprocess.TimeoutExpired:
+        logger.error("⏱️ Тестирование превысило лимит времени")
+        await update.message.reply_text(
+            "⏱️ <b>Превышено время тестирования</b>\n\n"
+            "Процесс занял более 3 минут и был остановлен.",
+            parse_mode='HTML'
+        )
+    
+    except Exception as e:
+        logger.error(f"❌ Ошибка при тестировании: {e}")
+        await update.message.reply_text(
+            f"❌ <b>Ошибка</b>\n\n{str(e)}",
+            parse_mode='HTML'
+        )
+
+
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /stop - остановить парсинг."""
     global parsing_in_progress, current_parser_process
     
@@ -520,6 +649,7 @@ async def post_init(application: Application):
         BotCommand("start", "🏠 Главное меню"),
         BotCommand("parse", "🚀 Запустить парсинг"),
         BotCommand("stop", "⏹️ Остановить парсинг"),
+        BotCommand("test_antidetect", "🧪 Тест антидетекта"),
         BotCommand("cron_on", "⏰ Включить автозапуск"),
         BotCommand("cron_off", "⏸️ Отключить автозапуск"),
         BotCommand("cron_status", "📋 Статус автозапуска"),
@@ -543,6 +673,7 @@ def main():
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("parse", parse_command))
     application.add_handler(CommandHandler("stop", stop_command))
+    application.add_handler(CommandHandler("test_antidetect", test_antidetect_command))
     application.add_handler(CommandHandler("cron_status", cron_status_command))
     application.add_handler(CommandHandler("cron_on", cron_on_command))
     application.add_handler(CommandHandler("cron_off", cron_off_command))
@@ -551,7 +682,7 @@ def main():
     application.add_error_handler(error_handler)
     
     logger.info("✅ Бот запущен и готов к работе")
-    logger.info("Доступные команды: /start, /help, /status, /parse, /stop, /cron_on, /cron_off, /cron_status")
+    logger.info("Доступные команды: /start, /help, /status, /parse, /stop, /test_antidetect, /cron_on, /cron_off, /cron_status")
     
     # Запускаем бота
     application.run_polling(allowed_updates=Update.ALL_TYPES)
