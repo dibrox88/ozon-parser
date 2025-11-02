@@ -990,10 +990,6 @@ class OzonAuth:
         try:
             logger.info("Ждем поле для ввода SMS кода")
             
-            # ПРОВЕРКА: Может авторизация уже прошла?
-            if self.verify_login():
-                logger.success("✅ Уже авторизованы! SMS код не требуется.")
-                return True
             
             # Делаем скриншот
             time.sleep(2)
@@ -1003,7 +999,7 @@ class OzonAuth:
             # Ждем код от пользователя
             sms_code = sync_wait_for_input(
                 "📱 Введите SMS код, который пришел на ваш телефон:",
-                timeout=180
+                timeout=1800
             )
             
             if not sms_code:
@@ -1033,11 +1029,8 @@ class OzonAuth:
                 'input[name="otp"]',  # Основной селектор из HTML
                 'input[type="number"][name="otp"]',
                 'input[inputmode="numeric"][name="otp"]',
-                'input.d5_3_7-a.d5_3_7-a5',  # По классам
                 'input[maxlength="6"][name="otp"]',
                 'input[inputmode="numeric"]',  # Запасные варианты
-                'input[type="number"]',
-                'input[name="code"]',
             ]
             
             # Логируем все input в iframe
@@ -1080,7 +1073,7 @@ class OzonAuth:
                         screenshot = self._take_screenshot('sms_code_entered')
                         sync_send_photo(screenshot, "✅ SMS код введен")
                         
-                        time.sleep(1)
+                        time.sleep(3)
                         
                         # Нажимаем кнопку "Войти"
                         login_button_selectors = [
@@ -1126,19 +1119,19 @@ class OzonAuth:
                     continue
             
             # Если не нашли автоматически - просим пользователя
-            logger.warning("Поле кода не найдено автоматически")
-            sync_send_message(f"⚠️ Не удалось найти поле для ввода кода автоматически.\n\n"
-                            f"Ваш SMS код: <code>{sms_code}</code>\n\n"
-                            "Пожалуйста, введите его ВРУЧНУЮ в открытом браузере и нажмите 'Войти'.\n\n"
-                            "После этого отправьте 'OK' в Telegram.")
+            # logger.warning("Поле кода не найдено автоматически")
+            # sync_send_message(f"⚠️ Не удалось найти поле для ввода кода автоматически.\n\n"
+            #                 f"Ваш SMS код: <code>{sms_code}</code>\n\n"
+            #                 "Пожалуйста, введите его ВРУЧНУЮ в открытом браузере и нажмите 'Войти'.\n\n"
+            #                 "После этого отправьте 'OK' в Telegram.")
             
-            response = sync_wait_for_input("Введите 'OK' после того как введете SMS код вручную", timeout=120)
+            # response = sync_wait_for_input("Введите 'OK' после того как введете SMS код вручную", timeout=120)
             
-            if response and response.upper() == 'OK':
-                logger.info("Пользователь подтвердил ввод SMS кода")
-                screenshot = self._take_screenshot('sms_code_manual')
-                sync_send_photo(screenshot, "SMS код введен вручную")
-                return True
+            # if response and response.upper() == 'OK':
+            #     logger.info("Пользователь подтвердил ввод SMS кода")
+            #     screenshot = self._take_screenshot('sms_code_manual')
+            #     sync_send_photo(screenshot, "SMS код введен вручную")
+            #     return True
             
             return False
             
@@ -1169,7 +1162,7 @@ class OzonAuth:
             # Ждем код от пользователя
             email_code = sync_wait_for_input(
                 "📧 Введите код, который пришел на ваш email:",
-                timeout=300  # 5 минут на проверку почты
+                timeout=3000  # 5 минут на проверку почты
             )
             
             if not email_code:
@@ -1256,19 +1249,19 @@ class OzonAuth:
                     continue
             
             # Если не нашли автоматически - просим пользователя
-            logger.warning("Поле кода не найдено автоматически")
-            sync_send_message(f"⚠️ Не удалось найти поле для ввода кода автоматически.\n\n"
-                            f"Ваш email код: <code>{email_code}</code>\n\n"
-                            "Пожалуйста, введите его ВРУЧНУЮ в открытом браузере.\n\n"
-                            "После этого отправьте 'OK' в Telegram.")
+            # logger.warning("Поле кода не найдено автоматически")
+            # sync_send_message(f"⚠️ Не удалось найти поле для ввода кода автоматически.\n\n"
+            #                 f"Ваш email код: <code>{email_code}</code>\n\n"
+            #                 "Пожалуйста, введите его ВРУЧНУЮ в открытом браузере.\n\n"
+            #                 "После этого отправьте 'OK' в Telegram.")
             
-            response = sync_wait_for_input("Введите 'OK' после того как введете email код вручную", timeout=120)
+            # response = sync_wait_for_input("Введите 'OK' после того как введете email код вручную", timeout=120)
             
-            if response and response.upper() == 'OK':
-                logger.info("Пользователь подтвердил ввод email кода")
-                screenshot = self._take_screenshot('email_code_manual')
-                sync_send_photo(screenshot, "Email код введен вручную")
-                return True
+            # if response and response.upper() == 'OK':
+            #     logger.info("Пользователь подтвердил ввод email кода")
+            #     screenshot = self._take_screenshot('email_code_manual')
+            #     sync_send_photo(screenshot, "Email код введен вручную")
+            #     return True
             
             return False
             
@@ -1354,7 +1347,6 @@ class OzonAuth:
             current_url = self.page.url
             logger.info(f"📍 Текущий URL: {current_url}")
             
-            
             # Делаем скриншот
             screenshot = self._take_screenshot('after_login')
             
@@ -1377,53 +1369,33 @@ class OzonAuth:
                 # Выбрасываем исключение чтобы немедленно остановить процесс
                 raise RuntimeError("Блокировка Ozon: доступ ограничен с текущими cookies")
             
-            # Сначала проверяем признаки НЕавторизации
-            not_auth_indicators = [
-                'text="Вы не авторизованы"',
-                '[data-widget="myGuest"]',
-                'text="необходимо войти"',
-                '[data-widget="loginButton"]',
-                'button:has-text("Войти")',
-                'a:has-text("Войти")'
-            ]
+            # ЕДИНСТВЕННЫЙ критерий авторизации: наличие текста "Дмитрий" в header
+            logger.info("Ищем текст 'Дмитрий' в header для проверки авторизации")
             
-            for indicator in not_auth_indicators:
-                try:
-                    element = self.page.query_selector(indicator)
-                    if element and element.is_visible():
-                        logger.warning(f"❌ Обнаружен индикатор неавторизации: {indicator}")
-                         # logger.warning(f"Текст элемента: {element.inner_text()[:100]}")
-                        sync_send_photo(screenshot, "❌ Авторизация не выполнена")
-                        return False
-                except:
-                    pass
-            
-            # Проверяем признаки успешной авторизации
-            success_indicators = [
-                'text="Мои заказы"',
-                'text="Профиль"',
-                '[data-test-id="user-menu"]',
-                'a[href*="/my/"]',
-                'div[class*="userAvatar"]',
-                '[data-widget="profileMenu"]',
-                'text="Мой профиль"',
-                'button:has-text("Профиль")'
-            ]
-            
-            for indicator in success_indicators:
-                try:
-                    element = self.page.query_selector(indicator)
-                    if element and element.is_visible():
-                        logger.success(f"✅ Авторизация успешна! Найден индикатор: {indicator}")
-                        sync_send_photo(screenshot, "✅ Авторизация успешна!")
+            try:
+                # Ищем header
+                header = self.page.query_selector('header')
+                if header:
+                    header_text = header.inner_text()
+                    logger.info(f"Текст header: {header_text[:200]}")
+                    
+                    if "Дмитрий" in header_text:
+                        logger.success("✅ Авторизация успешна! Найден текст 'Дмитрий' в header")
+                        sync_send_photo(screenshot, "✅ Авторизация успешна! (Найдено имя пользователя)")
                         return True
-                except:
-                    pass
-            
-            # Если не нашли ни одного индикатора - считаем что НЕ авторизованы
-            logger.warning("⚠️ Индикаторы авторизации не найдены - считаем что не авторизованы")
-            sync_send_photo(screenshot, "⚠️ Не удалось определить авторизацию")
-            return False
+                    else:
+                        logger.warning("❌ Текст 'Дмитрий' НЕ найден в header - не авторизованы")
+                        sync_send_photo(screenshot, "❌ Авторизация не выполнена (имя пользователя не найдено)")
+                        return False
+                else:
+                    logger.warning("⚠️ Header не найден на странице")
+                    sync_send_photo(screenshot, "⚠️ Header не найден")
+                    return False
+                    
+            except Exception as e:
+                logger.error(f"Ошибка при проверке header: {e}")
+                sync_send_photo(screenshot, f"❌ Ошибка проверки: {e}")
+                return False
             
         except Exception as e:
             logger.error(f"Ошибка при проверке авторизации: {e}")
