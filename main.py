@@ -7,16 +7,20 @@ from loguru import logger
 import fcntl  # Для блокировки файла (Unix)
 import time
 
-try:
-    # playwright-stealth v2.0.0
-    from playwright_stealth import Stealth
-    stealth = Stealth()
-    STEALTH_AVAILABLE = True
-    logger.info("✅ playwright-stealth загружен (v2.0)")
-except ImportError:
-    logger.warning("playwright-stealth не установлен, используем базовую защиту")
-    STEALTH_AVAILABLE = False
-    stealth = None
+# ВАЖНО: playwright-stealth ВЫЗЫВАЕТ БЛОКИРОВКУ на Ozon!
+# Не используем его - достаточно только базовой подмены navigator.webdriver
+# try:
+#     from playwright_stealth import Stealth
+#     stealth = Stealth()
+#     STEALTH_AVAILABLE = True
+#     logger.info("✅ playwright-stealth загружен (v2.0)")
+# except ImportError:
+#     logger.warning("playwright-stealth не установлен, используем базовую защиту")
+#     STEALTH_AVAILABLE = False
+#     stealth = None
+
+STEALTH_AVAILABLE = False
+stealth = None
 
 # Настройка логирования
 Path('logs').mkdir(exist_ok=True)
@@ -202,10 +206,8 @@ def main():
 
                     page = context.new_page()
 
-                    # Применяем stealth если доступен
-                    if STEALTH_AVAILABLE and stealth:
-                        stealth.apply_stealth_sync(page)
-                        logger.info("✅ Stealth применен к странице")
+                    # НЕ применяем playwright-stealth - он вызывает блокировку!
+                    # Достаточно только базовой подмены navigator.webdriver выше
 
                     page.set_default_timeout(Config.DEFAULT_TIMEOUT)
                     page.set_default_navigation_timeout(Config.NAVIGATION_TIMEOUT)
@@ -267,10 +269,8 @@ def main():
                 
                 page = context.new_page()
                 
-                # Применяем stealth для обхода антибот защиты
-                if STEALTH_AVAILABLE and stealth:
-                    stealth.apply_stealth_sync(page)
-                    logger.info("✅ Stealth применен к странице")
+                # НЕ применяем playwright-stealth - он вызывает блокировку!
+                # Достаточно только базовой подмены navigator.webdriver выше
                 
                 page.set_default_timeout(Config.DEFAULT_TIMEOUT)
                 page.set_default_navigation_timeout(Config.NAVIGATION_TIMEOUT)
