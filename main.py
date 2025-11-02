@@ -172,30 +172,49 @@ def main():
             sync_send_message("🖥️ <b>Desktop Linux UA</b>\n\nРазрешение: 1920x1080\nТестирование обхода защиты...")
             
             # ПРИОРИТЕТ 2: Пытаемся загрузить старую Playwright сессию
+            # Вместо того чтобы позволять session_manager создавать собственный контекст
+            # (который раньше использовал mobile emulation), создаём контекст с
+            # storage_state, но с текущей стратегией (Desktop Linux UA). Это предотвращает
+            # смену User-Agent/viewport при восстановлении сессии и делает поведение
+            # последовательным.
             if session_manager.session_exists():
                 logger.info("🔄 Пробуем загрузить сохраненную сессию...")
                 sync_send_message("🔄 Найдена сохраненная сессия. Проверяем...")
-                
-                context = session_manager.load_session(browser)
-                
-                if context:
-                    # Проверяем, работает ли сессия
+
+                try:
+                    context = browser.new_context(
+                        storage_state=str(session_manager.state_file),
+                        viewport={'width': 1920, 'height': 1080},
+                        user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        locale='ru-RU',
+                        timezone_id='Europe/Moscow',
+                        has_touch=False,
+                        is_mobile=False,
+                        device_scale_factor=1,
+                    )
+
+                    # Обычная минимальная подмена для navigator.webdriver
+                    context.add_init_script("""
+                        Object.defineProperty(navigator, 'webdriver', {
+                            get: () => undefined
+                        });
+                    """)
+
                     page = context.new_page()
-                    
-                    # Применяем stealth для обхода антибот защиты
+
+                    # Применяем stealth если доступен
                     if STEALTH_AVAILABLE and stealth:
                         stealth.apply_stealth_sync(page)
                         logger.info("✅ Stealth применен к странице")
-                    
+
                     page.set_default_timeout(Config.DEFAULT_TIMEOUT)
                     page.set_default_navigation_timeout(Config.NAVIGATION_TIMEOUT)
-                    
+
+                    # Проверяем, работает ли сессия
                     try:
-                        # Пробуем открыть страницу заказов
                         page.goto(Config.OZON_ORDERS_URL, timeout=30000)
                         page.wait_for_load_state('networkidle', timeout=15000)
-                        
-                        # Проверяем, авторизованы ли мы
+
                         auth = OzonAuth(page)
                         if auth.verify_login():
                             logger.info("✅ Сессия действительна! Авторизация не требуется.")
@@ -207,7 +226,7 @@ def main():
                             session_manager.delete_session()
                             context.close()
                             context = None
-                    
+
                     except RuntimeError as e:
                         # Блокировка обнаружена
                         if "Блокировка Ozon" in str(e):
@@ -218,6 +237,14 @@ def main():
                             sys.exit(1)
                         else:
                             raise
+
+                except Exception as e:
+                    logger.warning(f"⚠️ Не удалось загрузить сохраненную сессию корректно: {e}")
+                    sync_send_message("⚠️ Не удалось использовать сессию. Выполняем авторизацию...")
+                    session_manager.delete_session()
+                    if 'context' in locals() and context:
+                        context.close()
+                    context = None
                     
                     except Exception as e:
                         logger.warning(f"⚠️ Не удалось использовать сохраненную сессию: {e}")
