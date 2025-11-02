@@ -1109,7 +1109,25 @@ class OzonAuth:
                             except:
                                 pass
                         
-                        time.sleep(2)
+                        # Ждем обработки кода и загрузки страницы
+                        logger.info("Ждем обработки SMS кода...")
+                        time.sleep(5)
+                        
+                        # Делаем скриншот результата
+                        screenshot = self._take_screenshot('after_sms_code_submit')
+                        sync_send_photo(screenshot, "Проверяем результат ввода SMS кода...")
+                        
+                        # ВАЖНО: Проверяем успешность авторизации
+                        if self.verify_login():
+                            logger.success("✅ SMS код принят, авторизация успешна!")
+                            sync_send_message("✅ SMS код принят! Авторизация завершена.")
+                            return True
+                        else:
+                            logger.warning("⚠️ SMS код введен, но авторизация не подтверждена")
+                            sync_send_message("⚠️ SMS код введен, но проверка авторизации не прошла.\n\n"
+                                            "Возможно код неверный или требуется дополнительное действие.")
+                            # Не возвращаем False сразу - даём шанс email коду
+                        
                         return True
                         
                 except PlaywrightTimeout:
@@ -1118,20 +1136,29 @@ class OzonAuth:
                     logger.error(f"Ошибка при обработке селектора {selector}: {e}")
                     continue
             
-            # Если не нашли автоматически - просим пользователя
-            # logger.warning("Поле кода не найдено автоматически")
-            # sync_send_message(f"⚠️ Не удалось найти поле для ввода кода автоматически.\n\n"
-            #                 f"Ваш SMS код: <code>{sms_code}</code>\n\n"
-            #                 "Пожалуйста, введите его ВРУЧНУЮ в открытом браузере и нажмите 'Войти'.\n\n"
-            #                 "После этого отправьте 'OK' в Telegram.")
+            # Если не нашли поле автоматически - используем ручной режим
+            logger.warning("Поле SMS кода не найдено автоматически")
+            sync_send_message(f"⚠️ Не удалось найти поле для ввода SMS кода автоматически.\n\n"
+                            f"Ваш SMS код: <code>{sms_code}</code>\n\n"
+                            "Пожалуйста, введите его ВРУЧНУЮ в открытом браузере и нажмите 'Войти'.\n\n"
+                            "После этого отправьте 'OK' в Telegram.")
             
-            # response = sync_wait_for_input("Введите 'OK' после того как введете SMS код вручную", timeout=120)
+            response = sync_wait_for_input("Введите 'OK' после того как введете SMS код вручную", timeout=120)
             
-            # if response and response.upper() == 'OK':
-            #     logger.info("Пользователь подтвердил ввод SMS кода")
-            #     screenshot = self._take_screenshot('sms_code_manual')
-            #     sync_send_photo(screenshot, "SMS код введен вручную")
-            #     return True
+            if response and response.upper() == 'OK':
+                logger.info("Пользователь подтвердил ввод SMS кода")
+                time.sleep(3)
+                screenshot = self._take_screenshot('sms_code_manual')
+                sync_send_photo(screenshot, "Проверяем авторизацию после ручного ввода...")
+                
+                # Проверяем результат
+                if self.verify_login():
+                    logger.success("✅ Авторизация успешна после ручного ввода SMS!")
+                    return True
+                else:
+                    logger.warning("⚠️ Авторизация не подтверждена после ручного ввода SMS")
+                    sync_send_message("⚠️ Проверка авторизации не прошла.\n\nВозможно требуется код из email.")
+                    return True  # Даём шанс продолжить к email коду
             
             return False
             
