@@ -52,7 +52,20 @@ def test_single_order():
             # Пробуем загрузить сессию
             if session_manager.session_exists():
                 logger.info("📂 Загружаем сохраненную сессию...")
-                session_manager.load_session(browser)
+                # Загружаем с Desktop настройками (чтобы соответствовать Strategy #3)
+                saved_context = session_manager.load_session(
+                    browser,
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    has_touch=False,
+                    is_mobile=False,
+                    device_scale_factor=1
+                )
+                if saved_context:
+                    context.close()
+                    context = saved_context
+                    page = context.new_page()
+                
                 page.goto(Config.OZON_ORDERS_URL)
                 page.wait_for_load_state('networkidle')
                 

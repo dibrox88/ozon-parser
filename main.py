@@ -245,14 +245,6 @@ def main():
                     if 'context' in locals() and context:
                         context.close()
                     context = None
-                    
-                    except Exception as e:
-                        logger.warning(f"⚠️ Не удалось использовать сохраненную сессию: {e}")
-                        sync_send_message("⚠️ Не удалось использовать сессию. Выполняем авторизацию...")
-                        session_manager.delete_session()
-                        if context:
-                            context.close()
-                        context = None
             
             # Если сессии нет или она не работает - создаем новый контекст и авторизуемся
             if context is None:
