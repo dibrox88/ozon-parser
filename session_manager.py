@@ -137,12 +137,22 @@ class SessionManager:
             logger.info("Сохраненная сессия не найдена")
         return exists
     
-    def load_session(self, browser: Browser) -> Optional[BrowserContext]:
+    def load_session(self, browser: Browser, viewport: dict = None, user_agent: str = None, 
+                     locale: str = 'ru-RU', timezone_id: str = 'Europe/Moscow',
+                     has_touch: bool = None, is_mobile: bool = None, 
+                     device_scale_factor: float = None) -> Optional[BrowserContext]:
         """
         Загрузить сохраненную сессию.
         
         Args:
             browser: Браузер Playwright
+            viewport: Viewport (по умолчанию мобильная эмуляция для обратной совместимости)
+            user_agent: User-Agent (по умолчанию мобильный для обратной совместимости)
+            locale: Локаль браузера
+            timezone_id: Временная зона
+            has_touch: Поддержка тач-событий
+            is_mobile: Мобильный режим
+            device_scale_factor: Масштаб устройства
             
         Returns:
             Контекст браузера с загруженной сессией или None
@@ -154,23 +164,35 @@ class SessionManager:
             
             logger.info("Загружаем сохраненную сессию...")
             
-            # Загружаем контекст из файла с настройками мобильной эмуляции
-            # (Strategy5_MobileEmulation - единственная рабочая стратегия на сервере)
+            # Значения по умолчанию - мобильная эмуляция (для обратной совместимости)
+            if viewport is None:
+                viewport = {'width': 412, 'height': 915}
+            if user_agent is None:
+                user_agent = 'Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36'
+            if has_touch is None:
+                has_touch = True
+            if is_mobile is None:
+                is_mobile = True
+            if device_scale_factor is None:
+                device_scale_factor = 3.5
+            
+            # Загружаем контекст из файла с переданными настройками
             context = browser.new_context(
                 storage_state=str(self.state_file),
-                viewport={'width': 412, 'height': 915},
-                user_agent='Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36',
-                locale='ru-RU',
-                timezone_id='Europe/Moscow',
-                has_touch=True,
-                is_mobile=True,
-                device_scale_factor=3.5,
+                viewport=viewport,
+                user_agent=user_agent,
+                locale=locale,
+                timezone_id=timezone_id,
+                has_touch=has_touch,
+                is_mobile=is_mobile,
+                device_scale_factor=device_scale_factor,
             )
             
             # Добавляем stealth скрипты
             self._add_stealth_scripts(context)
             
-            logger.info("✅ Сессия успешно загружена (Mobile Emulation)")
+            strategy_type = "Mobile" if is_mobile else "Desktop"
+            logger.info(f"✅ Сессия успешно загружена ({strategy_type}, {viewport['width']}x{viewport['height']})")
             return context
             
         except Exception as e:
