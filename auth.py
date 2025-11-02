@@ -1007,6 +1007,7 @@ class OzonAuth:
                 return False
             
             logger.info(f"Получен SMS код: {sms_code}")
+            sync_send_message(f"✅ КОД ПОЛУЧЕН: <code>{sms_code}</code>\n\nВводим код в форму...")
             
             # Ищем iframe с авторизацией
             auth_frame = None
@@ -1068,12 +1069,13 @@ class OzonAuth:
                         for char in sms_code:
                             code_input.type(char, delay=100)
                         
-                        time.sleep(2)
+                        # ВАЖНО: Ждем отрисовки введенного текста в браузере
+                        time.sleep(3)
                         
                         screenshot = self._take_screenshot('sms_code_entered')
-                        sync_send_photo(screenshot, "✅ SMS код введен")
+                        sync_send_photo(screenshot, f"✅ SMS код введен: {sms_code}")
                         
-                        time.sleep(3)
+                        time.sleep(2)
                         
                         # Нажимаем кнопку "Войти"
                         login_button_selectors = [
