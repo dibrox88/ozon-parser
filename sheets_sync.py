@@ -382,6 +382,103 @@ class SheetsSynchronizer:
             logger.error(f"❌ Ошибка обновления заказа: {e}")
             return False
     
+    def sync_split_items_status(self, order: Dict) -> None:
+        """
+        Синхронизировать статусы для разбитых товаров.
+        Если товар разбит на несколько единиц (is_split=True), 
+        все единицы должны иметь одинаковый статус.
+        
+        Args:
+            order: Данные заказа из JSON
+        """
+        try:
+            if not order.get('items'):
+                return
+            
+            order_number = order.get('order_number', '')
+            
+            # Группируем разбитые товары по (name, order_number, split_total)
+            split_groups = {}
+            
+            for item in order['items']:
+                if not item.get('is_split'):
+                    continue
+                
+                name = item.get('mapped_name', item.get('name', ''))
+                split_total = item.get('split_total', 0)
+                status = item.get('status', '')
+                
+                # Ключ группы: имя товара + номер заказа + общее количество единиц
+                group_key = f"{name}|{order_number}|{split_total}"
+                
+                if group_key not in split_groups:
+                    split_groups[group_key] = {
+                        'name': name,
+                        'split_total': split_total,
+                        'statuses': [],
+                        'items': []
+                    }
+                
+                split_groups[group_key]['statuses'].append(status)
+                split_groups[group_key]['items'].append(item)
+            
+            # Проверяем каждую группу на несоответствие статусов
+            for group_key, group_data in split_groups.items():
+                statuses = group_data['statuses']
+                
+                # Если все статусы одинаковые - ничего не делаем
+                if len(set(statuses)) == 1:
+                    continue
+                
+                # Если статусы различаются - выбираем приоритетный
+                # Приоритет: получен > в пункте выдачи > отменён > забрать
+                priority_status = self._get_priority_status(statuses)
+                
+                logger.warning(
+                    f"⚠️ Разбитый товар '{group_data['name']}' имеет разные статусы: {set(statuses)}"
+                )
+                logger.info(f"🔄 Синхронизация статуса на: '{priority_status}'")
+                
+                # Обновляем статусы всех единиц в группе
+                for item in group_data['items']:
+                    item['status'] = priority_status
+                
+                sync_send_message(
+                    f"🔄 <b>Синхронизация статусов</b>\n"
+                    f"Товар: {group_data['name']}\n"
+                    f"Единиц: {group_data['split_total']}\n"
+                    f"Новый статус: {priority_status}"
+                )
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка синхронизации статусов разбитых товаров: {e}")
+    
+    def _get_priority_status(self, statuses: List[str]) -> str:
+        """
+        Выбрать приоритетный статус из списка.
+        
+        Args:
+            statuses: Список статусов
+            
+        Returns:
+            Приоритетный статус
+        """
+        # Приоритеты статусов (чем меньше число, тем выше приоритет)
+        status_priority = {
+            'получен': 1,
+            'в пункте выдачи': 2,
+            'отменён': 3,
+            'забрать': 4
+        }
+        
+        # Сортируем статусы по приоритету
+        sorted_statuses = sorted(
+            statuses,
+            key=lambda s: status_priority.get(s, 999)
+        )
+        
+        return sorted_statuses[0] if sorted_statuses else statuses[0]
+    
     def prepare_rows_from_order(self, order: Dict) -> List[List]:
         """
         Подготовить строки для записи из одного заказа.
@@ -404,6 +501,11 @@ class SheetsSynchronizer:
             mapped_name = item.get('mapped_name', item.get('name', ''))
             mapped_type = item.get('mapped_type', '')
             
+            # Проверяем, является ли товар разбитым на единицы
+            is_split = item.get('is_split', False)
+            split_index = item.get('split_index', '')
+            split_total = item.get('split_total', '')
+            
             # Создаём quantity дубликатов строк
             for _ in range(quantity):
                 row = [
@@ -415,7 +517,10 @@ class SheetsSynchronizer:
                     price,                                     # F: price
                     mapped_name,                               # G: mapped_name
                     mapped_type,                               # H: mapped_type
-                    ""                                         # I: пустой (резерв)
+                    "",                                        # I: пустой (резерв)
+                    str(is_split) if is_split else "",        # J: is_split
+                    str(split_index) if split_index else "",  # K: split_index
+                    str(split_total) if split_total else ""   # L: split_total
                 ]
                 rows.append(row)
         
@@ -618,6 +723,9 @@ class SheetsSynchronizer:
             
             for order in orders_list:
                 order_number = order.get('order_number')
+                
+                # Синхронизируем статусы разбитых товаров ПЕРЕД обновлением
+                self.sync_split_items_status(order)
                 
                 # Если заказ существует - проверяем на изменения
                 if order_number in existing_orders:
