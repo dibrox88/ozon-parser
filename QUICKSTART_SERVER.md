@@ -15,7 +15,7 @@ ssh ozon@85.193.81.13
 cd ~/ozon_parser
 source venv/bin/activate
 python main.py
-```
+```OzonParser2025!
 
 **Что должно произойти**:
 - ✅ Подключение к Telegram

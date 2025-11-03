@@ -178,10 +178,10 @@ def main():
         logger.info(f"✅ Загружено товаров из каталога: {len(catalog_products)}")
         sync_send_message(f"✅ Загружено товаров из каталога: {len(catalog_products)}")
         
-        # Создаём matcher (очистим старый кеш сопоставлений для чистого теста)
+        # Создаём matcher с основным файлом маппинга
         matcher = ProductMatcher(
             catalog_products,
-            mappings_file="product_mappings_new.json"  # Новый файл для тестирования
+            mappings_file="product_mappings.json"
         )
         
         # Пересопоставляем товары

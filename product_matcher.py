@@ -208,220 +208,118 @@ class ProductMatcher:
         return matches[:5]  # Топ-5
 
 
-def split_product_interactive(
+def split_product_into_units(
     item: Dict,
     matcher: ProductMatcher,
-    bundle_manager: BundleManager,
     order_number: Optional[str] = None
-) -> Optional[Dict]:
+) -> Optional[List[Dict]]:
     """
-    Интерактивная разбивка товара на компоненты через Telegram.
+    Разбить товар на несколько одинаковых единиц.
     
     Args:
         item: Словарь с данными товара
         matcher: Объект ProductMatcher
-        bundle_manager: Менеджер связок
         order_number: Номер заказа
         
     Returns:
-        Item с компонентами или None при отмене
+        Список одинаковых товаров или None при отмене
     """
     name = item.get('name', '')
     price = item.get('price', 0)
     quantity = item.get('quantity', 1)
+    color = item.get('color', '')
     
-    logger.info(f"🔧 Начало разбивки товара: {name[:50]}...")
-    
-    # Показываем список типов
-    type_list_msg = matcher.get_type_list_message()
+    logger.info(f"🔧 Разбивка товара на несколько штук: {name[:50]}...")
     
     message = f"""
-📦 <b>РАЗБИВКА ТОВАРА</b>
+📦 <b>РАЗБИВКА ТОВАРА НА НЕСКОЛЬКО ШТУК</b>
 
 <b>Товар:</b> {name}
+<b>Цвет:</b> {color or 'не указан'}
 <b>Цена:</b> {price} ₽
 <b>Количество:</b> {quantity}
 
-{type_list_msg}
+💡 <b>На сколько штук разбить?</b>
 
-💡 <b>Введите схему разбивки:</b>
-Формат: <code>тип1-тип2-тип3</code>
+Цена будет разделена между всеми штуками.
+В Google Таблицу будет добавлено несколько строк с одинаковым товаром.
 
-Пример: <code>2-3-5</code> означает:
-• 1-я часть: тип 2 (корпус)
-• 2-я часть: тип 3 (кулер)  
-• 3-я часть: тип 5 (блок питания)
-
-⏳ Ожидаю схему разбивки..."""
+⏳ Введите число штук (например: 2, 3, 5)..."""
     
     sync_send_message(message)
     
     from notifier import sync_wait_for_input
-    schema_input = sync_wait_for_input("Введите схему (например: 2-3-5) или CANCEL:", timeout=300)
+    units_input = sync_wait_for_input("Введите количество штук или CANCEL:", timeout=180)
     
-    if not schema_input or schema_input.upper() == 'CANCEL':
+    if not units_input or units_input.upper() == 'CANCEL':
         sync_send_message("❌ Разбивка отменена")
         return None
     
-    # Парсим схему
+    # Парсим количество
     try:
-        type_numbers = [int(x.strip()) for x in schema_input.split('-')]
+        num_units = int(units_input.strip())
+        if num_units < 2:
+            sync_send_message("❌ Количество должно быть минимум 2")
+            return None
+        if num_units > 20:
+            sync_send_message("❌ Слишком большое количество (максимум 20)")
+            return None
     except ValueError:
-        sync_send_message(f"❌ Некорректная схема: {schema_input}\nОжидался формат: 2-3-5")
+        sync_send_message(f"❌ Некорректное число: {units_input}")
         return None
     
-    # Проверяем валидность типов
-    invalid_types = [t for t in type_numbers if t not in matcher.type_map]
-    if invalid_types:
-        sync_send_message(f"❌ Некорректные номера типов: {invalid_types}\n\n{type_list_msg}")
-        return None
+    # Вычисляем цену за единицу
+    unit_price = round(price / num_units, 2)
     
-    components = []
+    # Корректируем последнюю цену чтобы сумма сошлась
+    remainder = round(price - (unit_price * (num_units - 1)), 2)
     
-    # Для каждого типа выбираем товар и цену
-    for i, type_num in enumerate(type_numbers, 1):
-        type_name = matcher.get_type_name(type_num)
+    # Создаем список одинаковых товаров
+    split_items = []
+    for i in range(num_units):
+        # Последняя единица получает остаток
+        current_price = remainder if i == num_units - 1 else unit_price
         
-        # Получаем товары этого типа
-        type_products = [p for p in matcher.catalog if p.get('type') == type_name]
+        split_item = {
+            'name': name,
+            'color': color,
+            'quantity': 1,  # Каждая единица имеет количество 1
+            'price': current_price,
+            'order_number': order_number,
+            'original_price': price,  # Сохраняем оригинальную цену
+            'split_index': i + 1,  # Индекс разбитой единицы (1, 2, 3...)
+            'split_total': num_units,  # Общее количество единиц
+            'is_split': True  # Маркер что это разбитый товар
+        }
         
-        if not type_products:
-            sync_send_message(f"⚠️ Нет товаров типа '{type_name}' в каталоге. Пропускаем.")
-            continue
+        # Копируем остальные поля из оригинального item
+        for key in ['url', 'image', 'status', 'date']:
+            if key in item:
+                split_item[key] = item[key]
         
-        # Показываем варианты
-        variants_msg = f"""
-🔧 <b>Часть {i}/{len(type_numbers)}</b>
-
-<b>Тип:</b> {type_name}
-
-<b>Выберите товар:</b>
-"""
-        for idx, product in enumerate(type_products[:15], 1):  # Максимум 15 вариантов
-            variants_msg += f"\n{idx}. {product['name']} ({product.get('price', 0)} ₽)"
-        
-        variants_msg += "\n\n💡 Введите номер товара:"
-        
-        sync_send_message(variants_msg)
-        
-        choice = sync_wait_for_input(f"Выберите товар (1-{min(15, len(type_products))}):", timeout=180)
-        
-        if not choice or not choice.isdigit():
-            sync_send_message(f"❌ Некорректный выбор. Отмена разбивки.")
-            return None
-        
-        choice_idx = int(choice) - 1
-        if choice_idx < 0 or choice_idx >= len(type_products):
-            sync_send_message(f"❌ Номер вне диапазона. Отмена разбивки.")
-            return None
-        
-        selected_product = type_products[choice_idx]
-        
-        # Запрашиваем цену
-        price_msg = f"""
-💰 <b>Укажите цену для:</b>
-{selected_product['name']}
-
-<b>Рекомендуемая цена:</b> {selected_product.get('price', 0)} ₽
-
-💡 Введите цену (число):"""
-        
-        sync_send_message(price_msg)
-        
-        price_input = sync_wait_for_input("Введите цену:", timeout=120)
-        
-        if not price_input:
-            sync_send_message(f"❌ Цена не указана. Отмена разбивки.")
-            return None
-        
-        try:
-            component_price = float(price_input.replace(',', '.'))
-        except ValueError:
-            sync_send_message(f"❌ Некорректная цена: {price_input}")
-            return None
-        
-        components.append({
-            "mapped_name": selected_product['name'],
-            "mapped_type": type_name,
-            "price": component_price
-        })
-        
-        logger.info(f"✅ Добавлен компонент {i}: {selected_product['name']} = {component_price}₽")
-    
-    if not components:
-        sync_send_message("❌ Не добавлено ни одного компонента")
-        return None
+        split_items.append(split_item)
+        logger.info(f"✅ Создана единица {i+1}/{num_units}: {name} = {current_price}₽")
     
     # Проверка суммы
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        total = sum(c['price'] for c in components)
-        
-        if abs(total - price) < 0.01:  # Совпадение
-            break
-        
-        sync_send_message(f"""
-⚠️ <b>Несовпадение суммы!</b>
-
-Сумма компонентов: {total} ₽
-Цена товара: {price} ₽
-Разница: {total - price} ₽
-
-💡 <b>Введите цены заново:</b>""")
-        
-        # Перезапрос цен
-        for i, component in enumerate(components, 1):
-            price_msg = f"""
-💰 <b>Цена {i}/{len(components)}:</b>
-{component['mapped_name']}
-
-Текущая цена: {component['price']} ₽
-
-Введите новую цену:"""
-            
-            sync_send_message(price_msg)
-            
-            price_input = sync_wait_for_input(f"Цена для {component['mapped_name']}:", timeout=120)
-            
-            if price_input:
-                try:
-                    component['price'] = float(price_input.replace(',', '.'))
-                except ValueError:
-                    pass
-    
-    # Финальная проверка
-    total = sum(c['price'] for c in components)
-    if abs(total - price) >= 0.01:
-        sync_send_message(f"""
-❌ <b>Суммы не совпадают после {max_attempts} попыток!</b>
-
-Сумма: {total} ₽
-Нужно: {price} ₽
-
-Разбивка отменена.""")
+    total = sum(si['price'] for si in split_items)
+    if abs(total - price) > 0.01:
+        logger.error(f"❌ Ошибка расчета: сумма {total}₽ != оригинал {price}₽")
+        sync_send_message(f"❌ Ошибка расчета цены. Разбивка отменена.")
         return None
     
-    # Сохраняем связку
-    if bundle_manager.create_bundle(name, components, price):
-        sync_send_message(f"""
-✅ <b>Связка создана!</b>
+    sync_send_message(f"""
+✅ <b>Товар разбит на {num_units} штук!</b>
 
 <b>Товар:</b> {name}
-<b>Компонентов:</b> {len(components)}
 <b>Общая цена:</b> {price} ₽
+<b>Цена за единицу:</b> {unit_price} ₽
+<b>Последняя единица:</b> {remainder} ₽
 
-Детали:""")
-        
-        for i, comp in enumerate(components, 1):
-            sync_send_message(f"{i}. {comp['mapped_name']} = {comp['price']}₽")
-        
-        # Создаём bundle item
-        bundle_item = create_bundle_item(item, components)
-        logger.info(f"✅ Создан bundle item для: {name[:50]}...")
-        return bundle_item
+Будет добавлено <b>{num_units} строк</b> в Google Таблицу.""")
     
-    sync_send_message("❌ Ошибка сохранения связки")
-    return None
+    logger.info(f"✅ Товар разбит на {num_units} единиц: {name} ({price}₽ → {num_units}x{unit_price}₽)")
+    
+    return split_items
 
 
 def match_product_interactive(
@@ -500,12 +398,12 @@ def match_product_interactive(
 ❓ <b>Предлагаем тип по умолчанию:</b> <code>{matcher.DEFAULT_TYPE}</code>
 
 💡 <b>Варианты ответа:</b>
-1. Отправьте <code>Р</code> - использовать тип "расходники"
-2. Отправьте <code>В</code> - ввести вручную (формат: Название | Тип)
-3. Отправьте <code>К</code> - разбить товар на компоненты"""
+1. Отправьте <code>1</code> - использовать тип "расходники"
+2. Отправьте <code>2</code> - выбрать из каталога (сначала тип, затем товар)
+3. Отправьте <code>3</code> - разбить на несколько штук"""
         
         if order_number and excluded_manager:
-            message += f"\n4. Отправьте <code>И</code> - исключить весь заказ {order_number}"
+            message += f"\n4. Отправьте <code>4</code> - исключить весь заказ {order_number}"
         
         message += "\n\n⏳ Ожидаю ваш ответ..."
         
@@ -513,7 +411,7 @@ def match_product_interactive(
         
         from notifier import sync_wait_for_input
         response = sync_wait_for_input(
-            "Отправьте Р, В, К или И:",
+            "Отправьте 1, 2, 3 или 4:",
             timeout=300
         )
         
@@ -521,17 +419,17 @@ def match_product_interactive(
             logger.warning(f"⏱️ Таймаут ожидания - используем тип по умолчанию для: {name}")
             mapped_name = name
             mapped_type = matcher.DEFAULT_TYPE
-        elif response.upper() == 'Р':
+        elif response.strip() == '1':
             # Использовать тип "расходники"
             logger.info(f"✅ Пользователь выбрал тип 'расходники' для: {name}")
             mapped_name = name
             mapped_type = "расходники"
-        elif response.upper() == 'К':
+        elif response.strip() == '3':
             # Разбивка товара на компоненты
             logger.info(f"🔧 Пользователь выбрал разбивку для: {name}")
             # Вернем специальный маркер - обработка будет в enrich_orders_with_mapping
             return "SPLIT", None
-        elif response.upper() == 'И':
+        elif response.strip() == '4':
             if order_number and excluded_manager:
                 # Исключаем весь заказ
                 excluded_manager.add_excluded(order_number)
@@ -542,22 +440,77 @@ def match_product_interactive(
                 logger.warning("⚠️ Невозможно исключить заказ - нет номера заказа или менеджера")
                 mapped_name = name
                 mapped_type = matcher.DEFAULT_TYPE
-        elif response.upper() == 'В':
-            # Ввод вручную
-            sync_send_message("📝 <b>Введите данные в формате:</b> <code>Название | Тип</code>\n\n⏳ Ожидаю ваш ответ...")
-            manual_response = sync_wait_for_input("Название | Тип:", timeout=120)
+        elif response.strip() == '2':
+            # Выбор из каталога: сначала тип, затем товар
+            logger.info(f"📋 Пользователь выбрал вариант 2 - выбор из каталога для: {name}")
             
-            if not manual_response or '|' not in manual_response:
-                logger.warning(f"⚠️ Некорректный формат ввода - используем тип по умолчанию для: {name}")
+            # Шаг 1: Показываем список типов
+            type_list_msg = matcher.get_type_list_message()
+            sync_send_message(f"{type_list_msg}\n\n⏳ Введите номер типа:")
+            
+            type_response = sync_wait_for_input("Введите номер типа:", timeout=180)
+            
+            if not type_response or not type_response.strip().isdigit():
+                logger.warning(f"⚠️ Некорректный выбор типа - используем тип по умолчанию для: {name}")
                 mapped_name = name
                 mapped_type = matcher.DEFAULT_TYPE
             else:
-                parts = manual_response.split('|', 1)
-                mapped_name = parts[0].strip()
-                mapped_type = parts[1].strip()
-                logger.info(f"✅ Пользователь ввёл вручную: {mapped_name} | {mapped_type}")
+                type_number = int(type_response.strip())
+                selected_type = matcher.get_type_name(type_number)
+                
+                if not selected_type:
+                    logger.warning(f"⚠️ Некорректный номер типа {type_number} - используем тип по умолчанию")
+                    mapped_name = name
+                    mapped_type = matcher.DEFAULT_TYPE
+                else:
+                    logger.info(f"✅ Выбран тип: {selected_type}")
+                    
+                    # Шаг 2: Фильтруем товары по выбранному типу
+                    products_by_type = [p for p in matcher.catalog if p.get('type', '').strip() == selected_type]
+                    
+                    if not products_by_type:
+                        logger.warning(f"⚠️ Нет товаров с типом '{selected_type}'")
+                        sync_send_message(f"⚠️ Нет товаров с типом '{selected_type}'\n\nИспользуем тип по умолчанию.")
+                        mapped_name = name
+                        mapped_type = matcher.DEFAULT_TYPE
+                    else:
+                        # Сортируем: сначала последние добавленные (из конца таблицы)
+                        products_by_type = list(reversed(products_by_type))
+                        
+                        # Показываем до 10 товаров
+                        products_to_show = products_by_type[:10]
+                        
+                        product_list_msg = f"📦 <b>Товары типа '{selected_type}':</b>\n\n"
+                        for idx, product in enumerate(products_to_show, start=1):
+                            product_name = product.get('name', 'Без названия')
+                            product_price = product.get('price', 0)
+                            product_list_msg += f"{idx}. <b>{product_name}</b> - {product_price} ₽\n"
+                        
+                        product_list_msg += f"\n⏳ Введите номер товара (1-{len(products_to_show)}):"
+                        sync_send_message(product_list_msg)
+                        
+                        product_response = sync_wait_for_input(
+                            f"Введите номер товара (1-{len(products_to_show)}):",
+                            timeout=180
+                        )
+                        
+                        if not product_response or not product_response.strip().isdigit():
+                            logger.warning(f"⚠️ Некорректный выбор товара - используем тип по умолчанию")
+                            mapped_name = name
+                            mapped_type = matcher.DEFAULT_TYPE
+                        else:
+                            product_number = int(product_response.strip())
+                            if 1 <= product_number <= len(products_to_show):
+                                selected_product = products_to_show[product_number - 1]
+                                mapped_name = selected_product.get('name', name)
+                                mapped_type = selected_product.get('type', selected_type)
+                                logger.info(f"✅ Выбран товар: {mapped_name} ({mapped_type})")
+                            else:
+                                logger.warning(f"⚠️ Некорректный номер товара {product_number}")
+                                mapped_name = name
+                                mapped_type = matcher.DEFAULT_TYPE
         else:
-            logger.warning(f"⚠️ Некорректный ответ - используем тип по умолчанию для: {name}")
+            logger.warning(f"⚠️ Некорректный ответ '{response}' - используем тип по умолчанию для: {name}")
             mapped_name = name
             mapped_type = matcher.DEFAULT_TYPE
         
@@ -593,11 +546,11 @@ def match_product_interactive(
     
     message += "\n\n💡 <b>Варианты ответа:</b>\n"
     message += "• <code>1-5</code> - выбрать вариант по номеру\n"
-    message += "• <code>Название | Тип</code> - ввести вручную\n"
-    message += "• <code>Р</code> - разбить товар на компоненты"
+    message += "• <code>6</code> - выбрать из каталога (сначала тип, затем товар)\n"
+    message += "• <code>7</code> - разбить на несколько штук"
     
     if order_number and excluded_manager:
-        message += f"\n• <code>EXCLUDE</code> - исключить весь заказ {order_number}"
+        message += f"\n• <code>8</code> - исключить весь заказ {order_number}"
     
     message += "\n\n⏳ Ожидаю ваш ответ..."
     
@@ -605,7 +558,7 @@ def match_product_interactive(
     
     from notifier import sync_wait_for_input
     response = sync_wait_for_input(
-        "Выберите номер (1-5), EXCLUDE или введите 'Название | Тип':",
+        "Выберите номер (1-8):",
         timeout=300
     )
     
@@ -615,11 +568,11 @@ def match_product_interactive(
         best_match = matches[0]
         mapped_name = best_match['name']
         mapped_type = best_match['type']
-    elif response.upper() == 'Р':
+    elif response.strip() == '7':
         # Разбивка товара
         logger.info(f"🔧 Пользователь выбрал разбивку для: {name}")
         return "SPLIT", None
-    elif response.upper() == 'EXCLUDE':
+    elif response.strip() == '8':
         if order_number and excluded_manager:
             excluded_manager.add_excluded(order_number)
             sync_send_message(f"🚫 <b>Заказ {order_number} исключён!</b>\n\nВсе товары из этого заказа будут пропущены.")
@@ -630,9 +583,83 @@ def match_product_interactive(
             best_match = matches[0]
             mapped_name = best_match['name']
             mapped_type = best_match['type']
-    elif response.isdigit():
-        # Выбран номер
-        choice = int(response)
+    elif response.strip() == '6':
+        # Выбор из каталога: сначала тип, затем товар
+        logger.info(f"📋 Пользователь выбрал вариант 6 - выбор из каталога для: {name}")
+        
+        # Шаг 1: Показываем список типов
+        type_list_msg = matcher.get_type_list_message()
+        sync_send_message(f"{type_list_msg}\n\n⏳ Введите номер типа:")
+        
+        type_response = sync_wait_for_input("Введите номер типа:", timeout=180)
+        
+        if not type_response or not type_response.strip().isdigit():
+            logger.warning(f"⚠️ Некорректный выбор типа - используем лучшее совпадение")
+            best_match = matches[0]
+            mapped_name = best_match['name']
+            mapped_type = best_match['type']
+        else:
+            type_number = int(type_response.strip())
+            selected_type = matcher.get_type_name(type_number)
+            
+            if not selected_type:
+                logger.warning(f"⚠️ Некорректный номер типа {type_number} - используем лучшее совпадение")
+                best_match = matches[0]
+                mapped_name = best_match['name']
+                mapped_type = best_match['type']
+            else:
+                logger.info(f"✅ Выбран тип: {selected_type}")
+                
+                # Шаг 2: Фильтруем товары по выбранному типу
+                products_by_type = [p for p in matcher.catalog if p.get('type', '').strip() == selected_type]
+                
+                if not products_by_type:
+                    logger.warning(f"⚠️ Нет товаров с типом '{selected_type}'")
+                    sync_send_message(f"⚠️ Нет товаров с типом '{selected_type}'\n\nИспользуем лучшее совпадение.")
+                    best_match = matches[0]
+                    mapped_name = best_match['name']
+                    mapped_type = best_match['type']
+                else:
+                    # Сортируем: сначала последние добавленные (из конца таблицы)
+                    products_by_type = list(reversed(products_by_type))
+                    
+                    # Показываем до 10 товаров
+                    products_to_show = products_by_type[:10]
+                    
+                    product_list_msg = f"📦 <b>Товары типа '{selected_type}':</b>\n\n"
+                    for idx, product in enumerate(products_to_show, start=1):
+                        product_name = product.get('name', 'Без названия')
+                        product_price = product.get('price', 0)
+                        product_list_msg += f"{idx}. <b>{product_name}</b> - {product_price} ₽\n"
+                    
+                    product_list_msg += f"\n⏳ Введите номер товара (1-{len(products_to_show)}):"
+                    sync_send_message(product_list_msg)
+                    
+                    product_response = sync_wait_for_input(
+                        f"Введите номер товара (1-{len(products_to_show)}):",
+                        timeout=180
+                    )
+                    
+                    if not product_response or not product_response.strip().isdigit():
+                        logger.warning(f"⚠️ Некорректный выбор товара - используем лучшее совпадение")
+                        best_match = matches[0]
+                        mapped_name = best_match['name']
+                        mapped_type = best_match['type']
+                    else:
+                        product_number = int(product_response.strip())
+                        if 1 <= product_number <= len(products_to_show):
+                            selected_product = products_to_show[product_number - 1]
+                            mapped_name = selected_product.get('name', name)
+                            mapped_type = selected_product.get('type', selected_type)
+                            logger.info(f"✅ Выбран товар: {mapped_name} ({mapped_type})")
+                        else:
+                            logger.warning(f"⚠️ Некорректный номер товара {product_number}")
+                            best_match = matches[0]
+                            mapped_name = best_match['name']
+                            mapped_type = best_match['type']
+    elif response.strip().isdigit():
+        # Выбран номер из предложенных совпадений
+        choice = int(response.strip())
         if 1 <= choice <= min(5, len(matches)):
             selected = matches[choice - 1]
             mapped_name = selected['name']
@@ -643,15 +670,9 @@ def match_product_interactive(
             best_match = matches[0]
             mapped_name = best_match['name']
             mapped_type = best_match['type']
-    elif '|' in response:
-        # Ручной ввод
-        parts = response.split('|', 1)
-        mapped_name = parts[0].strip()
-        mapped_type = parts[1].strip()
-        logger.info(f"✅ Пользователь ввёл вручную: {mapped_name} | {mapped_type}")
     else:
-        # Некорректный ответ - используем лучшее
-        logger.warning(f"⚠️ Некорректный ответ - используем лучшее совпадение для: {name}")
+        # Некорректный ответ - используем лучшее совпадение
+        logger.warning(f"⚠️ Некорректный ответ '{response}' - используем лучшее совпадение для: {name}")
         best_match = matches[0]
         mapped_name = best_match['name']
         mapped_type = best_match['type']
@@ -736,50 +757,17 @@ def enrich_orders_with_mapping(
             orders_to_exclude.update(order_numbers)
             continue
         
-        # Обработка разбивки товара
+        # Обработка разбивки товара на единицы
         if mapped_name == "SPLIT" and mapped_type is None:
-            logger.info(f"🔧 Разбивка товара: {item['name'][:50]}...")
+            logger.info(f"🔧 Разбивка товара на единицы: {item['name'][:50]}...")
             
-            # Проверяем, есть ли уже сохранённая связка
-            if bundle_manager.has_bundle(item['name']):
-                existing_bundle = bundle_manager.get_bundle(item['name'])
-                
-                # Проверяем что связка успешно получена
-                if existing_bundle:
-                    # Показываем детали и спрашиваем про переиспользование
-                    from notifier import sync_send_message, sync_wait_for_input
-                    
-                    reuse_msg = f"""
-📦 <b>Найдена сохранённая связка!</b>
-
-<b>Товар:</b> {item['name']}
-<b>Компонентов:</b> {len(existing_bundle['components'])}
-
-<b>Детали:</b>"""
-                    sync_send_message(reuse_msg)
-                    
-                    for i, comp in enumerate(existing_bundle['components'], 1):
-                        sync_send_message(
-                            f"  {i}. {comp['mapped_name']} ({comp['mapped_type']}) = {comp['price']}₽"
-                        )
-                    
-                    sync_send_message("\n💡 <b>Варианты ответа:</b>\n• <code>ДА</code> - использовать сохранённую\n• <code>НЕТ</code> - создать новую")
-                    
-                    reuse_response = sync_wait_for_input("ДА или НЕТ:", timeout=120)
-                    
-                    if reuse_response and reuse_response.upper() == 'ДА':
-                        # Переиспользуем существующую связку
-                        bundle_item = create_bundle_item(item, existing_bundle['components'])
-                        mapping_cache[key] = {'is_bundle': True, 'bundle_item': bundle_item}
-                        logger.info(f"♻️ Переиспользована связка для: {item['name'][:50]}...")
-                        continue
+            # Создаём новую разбивку на единицы
+            split_items = split_product_into_units(item, matcher, first_order)
             
-            # Создаём новую связку
-            bundle_item = split_product_interactive(item, matcher, bundle_manager, first_order)
-            
-            if bundle_item:
-                mapping_cache[key] = {'is_bundle': True, 'bundle_item': bundle_item}
-                logger.info(f"✅ Создана связка для: {item['name'][:50]}...")
+            if split_items:
+                # Разбивка успешна - сохраняем список единиц
+                mapping_cache[key] = {'is_split': True, 'split_items': split_items}
+                logger.info(f"✅ Разбит на {len(split_items)} единиц: {item['name'][:50]}...")
             else:
                 logger.warning(f"⚠️ Разбивка отменена для: {item['name'][:50]}...")
                 # Fallback к обычному маппингу
@@ -824,23 +812,18 @@ def enrich_orders_with_mapping(
             if key in mapping_cache:
                 cache_entry = mapping_cache[key]
                 
-                # Если это связка - заменяем товар на компоненты
-                if cache_entry.get('is_bundle'):
-                    bundle_item = cache_entry['bundle_item']
-                    # Добавляем каждый компонент как отдельный товар
-                    for component in bundle_item['components']:
-                        component_item = {
-                            'name': item['name'],  # Оригинальное название
-                            'price': component['price'],
-                            'quantity': item['quantity'],
-                            'color': item.get('color', ''),
-                            'mapped_name': component['mapped_name'],
-                            'mapped_type': component['mapped_type'],
-                            'is_bundle_component': True,
-                            'bundle_key': item['name']
-                        }
-                        enriched_items.append(component_item)
+                # Если это разбитый товар - добавляем все единицы
+                if cache_entry.get('is_split'):
+                    split_items = cache_entry['split_items']
+                    # Добавляем каждую единицу как отдельную строку
+                    for split_item in split_items:
+                        enriched_item = split_item.copy()
+                        # Применяем маппинг если есть
+                        enriched_item['mapped_name'] = split_item['name']
+                        enriched_item['mapped_type'] = matcher.DEFAULT_TYPE
+                        enriched_items.append(enriched_item)
                         matched_items += 1
+                    logger.info(f"📦 Добавлено {len(split_items)} единиц для: {item['name'][:30]}")
                 else:
                     # Обычный маппинг
                     enriched_item = item.copy()

@@ -997,6 +997,7 @@ class OzonAuth:
             sync_send_photo(screenshot, "📱 Запрошен SMS код")
             
             # Ждем код от пользователя
+            logger.info("Ожидание SMS кода от пользователя через Telegram...")
             sms_code = sync_wait_for_input(
                 "📱 Введите SMS код, который пришел на ваш телефон:",
                 timeout=1800
@@ -1004,25 +1005,31 @@ class OzonAuth:
             
             if not sms_code:
                 logger.error("Таймаут ожидания SMS кода")
+                sync_send_message("❌ Таймаут ожидания SMS кода")
                 return False
             
-            logger.info(f"Получен SMS код: {sms_code}")
-            sync_send_message(f"✅ КОД ПОЛУЧЕН: <code>{sms_code}</code>\n\nВводим код в форму...")
+            logger.info(f"✅ Получен SMS код: {sms_code}")
+            sync_send_message(f"✅ КОД ПОЛУЧЕН: <code>{sms_code}</code>\n\n🔄 Вводим код в форму...")
+            
+            # ВАЖНО: Даём время на обработку кода и очистку updates
+            time.sleep(1)
             
             # Ищем iframe с авторизацией
+            logger.info("🔍 Ищем iframe для ввода SMS кода...")
             auth_frame = None
             for frame in self.page.frames:
                 frame_url = frame.url
                 if 'ozonid-lite' in frame_url or 'authFrame' in frame.name:
-                    logger.info(f"Используем iframe авторизации для ввода кода: {frame_url}")
+                    logger.info(f"✅ Найден iframe авторизации: {frame_url}")
                     auth_frame = frame
                     break
             
             if not auth_frame:
-                logger.warning("Iframe не найден, используем основную страницу")
+                logger.warning("⚠️ Iframe не найден, используем основную страницу")
                 auth_frame = self.page.main_frame
             
             # Ждем появления формы ввода кода
+            logger.info("⏳ Ждём появления формы ввода SMS кода...")
             time.sleep(2)
             
             # ТОЧНЫЙ селектор поля кода из HTML
@@ -1053,13 +1060,16 @@ class OzonAuth:
                 logger.error(f"Ошибка при логировании input: {e}")
             
             # Пробуем найти и заполнить поле кода
+            logger.info("🔍 Ищем поле для ввода SMS кода...")
             for selector in code_selectors:
                 try:
                     code_input = auth_frame.wait_for_selector(selector, timeout=3000, state='visible')
                     if code_input and code_input.is_visible():
-                        logger.info(f"✅ Найдено поле кода в iframe: {selector}")
+                        logger.info(f"✅ Найдено поле кода: {selector}")
+                        sync_send_message(f"🔍 Найдено поле кода, начинаем ввод...")
                         
                         # Вводим код
+                        logger.info(f"⌨️ Вводим SMS код: {sms_code}")
                         code_input.click()
                         time.sleep(0.5)
                         code_input.fill('')
@@ -1069,12 +1079,15 @@ class OzonAuth:
                         for char in sms_code:
                             code_input.type(char, delay=100)
                         
+                        logger.info("✅ SMS код введён в поле")
+                        
                         # ВАЖНО: Ждем отрисовки введенного текста в браузере
                         time.sleep(3)
                         
                         screenshot = self._take_screenshot('sms_code_entered')
                         sync_send_photo(screenshot, f"✅ SMS код введен: {sms_code}")
                         
+                        logger.info("🔍 Ищем кнопку 'Войти' после ввода SMS...")
                         time.sleep(2)
                         
                         # Нажимаем кнопку "Войти"

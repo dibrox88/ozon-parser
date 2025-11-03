@@ -82,8 +82,8 @@ def main():
         # Проверяем конфигурацию
         Config.validate()
         
-        logger.info("Запуск Ozon Parser v2.2.0 (Strategy #3: Desktop Linux UA)")
-        sync_send_message("🚀 <b>Ozon Parser v2.2.0</b>\n\n🖥️ Strategy #3: Desktop Linux 1920x1080\n✅ Обход защиты активен")
+        #logger.info("Запуск Ozon Parser v2.2.0 (Strategy #3: Desktop Linux UA)")
+        #sync_send_message("🚀 <b>Ozon Parser v2.2.0</b>\n\n🖥️ Strategy #3: Desktop Linux 1920x1080\n✅ Обход защиты активен")
         
         # Инициализируем менеджер сессий
         session_manager = SessionManager()
@@ -173,7 +173,7 @@ def main():
             # ========== КОНЕЦ ВРЕМЕННОГО ОТКЛЮЧЕНИЯ ==========
             
             logger.info("🖥️ Используем Strategy #3 (Desktop Linux UA)")
-            sync_send_message("🖥️ <b>Desktop Linux UA</b>\n\nРазрешение: 1920x1080\nТестирование обхода защиты...")
+            #sync_send_message("🖥️ <b>Desktop Linux UA</b>\n\nРазрешение: 1920x1080\nТестирование обхода защиты...")
             
             # ПРИОРИТЕТ 2: Пытаемся загрузить старую Playwright сессию
             # Вместо того чтобы позволять session_manager создавать собственный контекст

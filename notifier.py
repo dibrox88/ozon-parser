@@ -87,9 +87,18 @@ class TelegramNotifier:
         """
         await self.send_message(f"⏳ {prompt}")
         
-        # Получаем последний update ID
-        updates = await self.bot.get_updates(limit=1)
-        last_update_id = updates[0].update_id if updates else 0
+        # Получаем последний update ID и очищаем старые сообщения
+        try:
+            updates = await self.bot.get_updates(limit=100, timeout=1)
+            last_update_id = updates[-1].update_id if updates else 0
+            
+            # ВАЖНО: Подтверждаем все старые updates, чтобы они не мешали
+            if updates:
+                await self.bot.get_updates(offset=last_update_id + 1, timeout=1)
+                logger.info(f"Очищено {len(updates)} старых updates, начинаем с ID {last_update_id + 1}")
+        except Exception as e:
+            logger.warning(f"Не удалось очистить старые updates: {e}")
+            last_update_id = 0
         
         start_time = asyncio.get_event_loop().time()
         
@@ -109,7 +118,13 @@ class TelegramNotifier:
                         response = update.message.text.strip()
                         logger.info(f"Получен ответ от пользователя: {response}")
                         
-                        # Подтверждаем получение
+                        # ВАЖНО: Обновляем last_update_id ПЕРЕД подтверждением
+                        last_update_id = update.update_id
+                        
+                        # Подтверждаем получение всех updates до этого момента
+                        await self.bot.get_updates(offset=last_update_id + 1, timeout=1)
+                        
+                        # Подтверждаем получение пользователю
                         await self.send_message(f"✅ Получено: <code>{response}</code>")
                         
                         return response
@@ -118,6 +133,9 @@ class TelegramNotifier:
                     
             except TelegramError as e:
                 logger.error(f"Ошибка при ожидании ответа: {e}")
+                await asyncio.sleep(2)
+            except Exception as e:
+                logger.error(f"Неожиданная ошибка при ожидании ответа: {e}")
                 await asyncio.sleep(2)
         
         logger.warning("Таймаут ожидания ответа от пользователя")
