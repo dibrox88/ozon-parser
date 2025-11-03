@@ -87,15 +87,25 @@ class TelegramNotifier:
         """
         await self.send_message(f"⏳ {prompt}")
         
-        # Получаем последний update ID и очищаем старые сообщения
+        # Получаем последний update ID и очищаем старые сообщения АГРЕССИВНО
         try:
-            updates = await self.bot.get_updates(limit=100, timeout=1)
-            last_update_id = updates[-1].update_id if updates else 0
+            # Делаем несколько попыток очистки с увеличенным лимитом
+            for attempt in range(3):
+                updates = await self.bot.get_updates(limit=100, timeout=2)
+                if updates:
+                    last_update_id = updates[-1].update_id
+                    # Подтверждаем все updates
+                    await self.bot.get_updates(offset=last_update_id + 1, timeout=1)
+                    logger.info(f"Попытка {attempt + 1}: Очищено {len(updates)} старых updates")
+                    await asyncio.sleep(0.5)
+                else:
+                    logger.info(f"Попытка {attempt + 1}: Нет старых updates")
+                    break
             
-            # ВАЖНО: Подтверждаем все старые updates, чтобы они не мешали
-            if updates:
-                await self.bot.get_updates(offset=last_update_id + 1, timeout=1)
-                logger.info(f"Очищено {len(updates)} старых updates, начинаем с ID {last_update_id + 1}")
+            # Финальная очистка
+            updates = await self.bot.get_updates(limit=1, timeout=1)
+            last_update_id = updates[-1].update_id if updates else 0
+            logger.info(f"✅ Готовы принимать новые сообщения, последний ID: {last_update_id}")
         except Exception as e:
             logger.warning(f"Не удалось очистить старые updates: {e}")
             last_update_id = 0
@@ -124,8 +134,9 @@ class TelegramNotifier:
                         # Подтверждаем получение всех updates до этого момента
                         await self.bot.get_updates(offset=last_update_id + 1, timeout=1)
                         
-                        # Подтверждаем получение пользователю
-                        await self.send_message(f"✅ Получено: <code>{response}</code>")
+                        # НЕ отправляем подтверждение здесь - это сделает вызывающий код
+                        # чтобы избежать дублирования сообщений
+                        logger.info(f"✅ Получен и подтвержден ответ: {response}")
                         
                         return response
                     
