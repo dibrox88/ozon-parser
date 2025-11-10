@@ -456,7 +456,7 @@ def match_product_interactive(
 
 💡 <b>Варианты ответа:</b>
 1. Отправьте <code>1</code> - использовать тип "расходники"
-2. Отправьте <code>2</code> - выбрать из каталога (сначала тип, затем товар)"""
+2. Отправьте <code>2</code> - выбрать из каталога (сначала тип, затем товар или название)"""
         
         if not skip_split_option:
             message += "\n3. Отправьте <code>3</code> - разбить на несколько штук"
@@ -551,27 +551,59 @@ def match_product_interactive(
                             product_price = product.get('price', 0)
                             product_list_msg += f"{idx}. <b>{product_name}</b> - {product_price} ₽\n"
                         
-                        product_list_msg += f"\n⏳ Введите номер товара (1-{len(products_to_show)}):"
+                        product_list_msg += f"\n⏳ Введите номер товара (1-{len(products_to_show)}) или название:"
                         sync_send_message(product_list_msg)
                         
                         product_response = sync_wait_for_input(
-                            f"Введите номер товара (1-{len(products_to_show)}):",
+                            f"Введите номер товара (1-{len(products_to_show)}) или название:",
                             timeout=0  # Без таймаута
                         )
                         
-                        if not product_response or not product_response.strip().isdigit():
-                            logger.warning(f"⚠️ Некорректный выбор товара - используем тип по умолчанию")
+                        if not product_response:
+                            logger.warning(f"⚠️ Нет ответа - используем тип по умолчанию")
                             mapped_name = name
                             mapped_type = matcher.DEFAULT_TYPE
-                        else:
+                        elif product_response.strip().isdigit():
+                            # Пользователь ввел номер товара
                             product_number = int(product_response.strip())
                             if 1 <= product_number <= len(products_to_show):
                                 selected_product = products_to_show[product_number - 1]
                                 mapped_name = selected_product.get('name', name)
                                 mapped_type = selected_product.get('type', selected_type)
-                                logger.info(f"✅ Выбран товар: {mapped_name} ({mapped_type})")
+                                logger.info(f"✅ Выбран товар по номеру: {mapped_name} ({mapped_type})")
                             else:
                                 logger.warning(f"⚠️ Некорректный номер товара {product_number}")
+                                mapped_name = name
+                                mapped_type = matcher.DEFAULT_TYPE
+                        else:
+                            # Пользователь ввел название товара - ищем по каталогу
+                            search_text = product_response.strip()
+                            logger.info(f"🔍 Поиск товара по названию: {search_text}")
+                            
+                            # Ищем в products_to_show
+                            found_product = None
+                            search_lower = search_text.lower()
+                            
+                            for product in products_to_show:
+                                product_name_lower = product.get('name', '').lower()
+                                # Точное совпадение
+                                if product_name_lower == search_lower:
+                                    found_product = product
+                                    logger.info(f"✅ Найдено точное совпадение: {product.get('name')}")
+                                    break
+                                # Частичное совпадение
+                                elif search_lower in product_name_lower or product_name_lower in search_lower:
+                                    if found_product is None:  # Берем первое частичное совпадение
+                                        found_product = product
+                                        logger.info(f"✅ Найдено частичное совпадение: {product.get('name')}")
+                            
+                            if found_product:
+                                mapped_name = found_product.get('name', name)
+                                mapped_type = found_product.get('type', selected_type)
+                                sync_send_message(f"✅ Выбран товар: <b>{mapped_name}</b> ({mapped_type})")
+                            else:
+                                logger.warning(f"⚠️ Товар '{search_text}' не найден в списке - используем тип по умолчанию")
+                                sync_send_message(f"⚠️ Товар '{search_text}' не найден в списке")
                                 mapped_name = name
                                 mapped_type = matcher.DEFAULT_TYPE
         else:
@@ -622,7 +654,7 @@ def match_product_interactive(
     
     message += "\n\n💡 <b>Варианты ответа:</b>\n"
     message += "• <code>1-5</code> - выбрать вариант по номеру\n"
-    message += "• <code>6</code> - выбрать из каталога (сначала тип, затем товар)"
+    message += "• <code>6</code> - выбрать из каталога (сначала тип, затем товар или название)"
     
     if not skip_split_option:
         message += "\n• <code>7</code> - разбить на несколько штук"
@@ -717,28 +749,61 @@ def match_product_interactive(
                         product_price = product.get('price', 0)
                         product_list_msg += f"{idx}. <b>{product_name}</b> - {product_price} ₽\n"
                     
-                    product_list_msg += f"\n⏳ Введите номер товара (1-{len(products_to_show)}):"
+                    product_list_msg += f"\n⏳ Введите номер товара (1-{len(products_to_show)}) или название:"
                     sync_send_message(product_list_msg)
                     
                     product_response = sync_wait_for_input(
-                        f"Введите номер товара (1-{len(products_to_show)}):",
+                        f"Введите номер товара (1-{len(products_to_show)}) или название:",
                         timeout=0  # Без таймаута
                     )
                     
-                    if not product_response or not product_response.strip().isdigit():
-                        logger.warning(f"⚠️ Некорректный выбор товара - используем лучшее совпадение")
+                    if not product_response:
+                        logger.warning(f"⚠️ Нет ответа - используем лучшее совпадение")
                         best_match = matches[0]
                         mapped_name = best_match['name']
                         mapped_type = best_match['type']
-                    else:
+                    elif product_response.strip().isdigit():
+                        # Пользователь ввел номер товара
                         product_number = int(product_response.strip())
                         if 1 <= product_number <= len(products_to_show):
                             selected_product = products_to_show[product_number - 1]
                             mapped_name = selected_product.get('name', name)
                             mapped_type = selected_product.get('type', selected_type)
-                            logger.info(f"✅ Выбран товар: {mapped_name} ({mapped_type})")
+                            logger.info(f"✅ Выбран товар по номеру: {mapped_name} ({mapped_type})")
                         else:
                             logger.warning(f"⚠️ Некорректный номер товара {product_number}")
+                            best_match = matches[0]
+                            mapped_name = best_match['name']
+                            mapped_type = best_match['type']
+                    else:
+                        # Пользователь ввел название товара - ищем по каталогу
+                        search_text = product_response.strip()
+                        logger.info(f"🔍 Поиск товара по названию: {search_text}")
+                        
+                        # Ищем в products_to_show
+                        found_product = None
+                        search_lower = search_text.lower()
+                        
+                        for product in products_to_show:
+                            product_name_lower = product.get('name', '').lower()
+                            # Точное совпадение
+                            if product_name_lower == search_lower:
+                                found_product = product
+                                logger.info(f"✅ Найдено точное совпадение: {product.get('name')}")
+                                break
+                            # Частичное совпадение
+                            elif search_lower in product_name_lower or product_name_lower in search_lower:
+                                if found_product is None:  # Берем первое частичное совпадение
+                                    found_product = product
+                                    logger.info(f"✅ Найдено частичное совпадение: {product.get('name')}")
+                        
+                        if found_product:
+                            mapped_name = found_product.get('name', name)
+                            mapped_type = found_product.get('type', selected_type)
+                            sync_send_message(f"✅ Выбран товар: <b>{mapped_name}</b> ({mapped_type})")
+                        else:
+                            logger.warning(f"⚠️ Товар '{search_text}' не найден в списке - используем лучшее совпадение")
+                            sync_send_message(f"⚠️ Товар '{search_text}' не найден в списке")
                             best_match = matches[0]
                             mapped_name = best_match['name']
                             mapped_type = best_match['type']
