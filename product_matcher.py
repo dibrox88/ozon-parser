@@ -288,14 +288,14 @@ def split_product_into_units(
 Цена будет разделена между всеми штуками.
 В Google Таблицу будет добавлено несколько строк с одинаковым товаром.
 
-⏳ Введите число штук (например: 2, 3, 5)..."""
+⏳ Введите число штук (например: 2, 3, 5) или 0 для отмены..."""
     
     sync_send_message(message)
     
     from notifier import sync_wait_for_input
-    units_input = sync_wait_for_input("Введите количество штук или CANCEL:", timeout=0)  # Без таймаута
+    units_input = sync_wait_for_input("Введите количество штук или 0:", timeout=0)  # Без таймаута
     
-    if not units_input or units_input.upper() == 'CANCEL':
+    if not units_input or units_input.strip() == '0':
         sync_send_message("❌ Разбивка отменена")
         return None
     
@@ -371,17 +371,19 @@ def match_product_interactive(
     matcher: ProductMatcher,
     auto_mode: bool = False,
     order_number: Optional[str] = None,
-    excluded_manager: Optional[ExcludedOrdersManager] = None
+    excluded_manager: Optional[ExcludedOrdersManager] = None,
+    skip_split_option: bool = False
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Интерактивное сопоставление товара с подтверждением через Telegram.
     
     Args:
         item: Словарь с данными товара (name, color, quantity, price)
-        matcher: Объект ProductMatcher
+        matcher: ProductMatcher
         auto_mode: Если True, автоматически выбирать лучшее совпадение без запроса
         order_number: Номер заказа (для возможности исключения всего заказа)
         excluded_manager: Менеджер исключённых заказов
+        skip_split_option: Если True, не показывать опцию разбивки (используется после разбивки)
         
     Returns:
         Tuple (mapped_name, mapped_type) или (None, None) если заказ исключён
@@ -454,8 +456,10 @@ def match_product_interactive(
 
 💡 <b>Варианты ответа:</b>
 1. Отправьте <code>1</code> - использовать тип "расходники"
-2. Отправьте <code>2</code> - выбрать из каталога (сначала тип, затем товар)
-3. Отправьте <code>3</code> - разбить на несколько штук"""
+2. Отправьте <code>2</code> - выбрать из каталога (сначала тип, затем товар)"""
+        
+        if not skip_split_option:
+            message += "\n3. Отправьте <code>3</code> - разбить на несколько штук"
         
         if order_number and excluded_manager:
             message += f"\n4. Отправьте <code>4</code> - исключить весь заказ {order_number}"
@@ -481,9 +485,15 @@ def match_product_interactive(
             mapped_type = "расходники"
         elif response.strip() == '3':
             # Разбивка товара на компоненты
-            logger.info(f"🔧 Пользователь выбрал разбивку для: {name}")
-            # Вернем специальный маркер - обработка будет в enrich_orders_with_mapping
-            return "SPLIT", None
+            if skip_split_option:
+                logger.warning(f"⚠️ Опция разбивки недоступна - используем тип по умолчанию")
+                sync_send_message("⚠️ Опция разбивки недоступна на этом этапе")
+                mapped_name = name
+                mapped_type = matcher.DEFAULT_TYPE
+            else:
+                logger.info(f"🔧 Пользователь выбрал разбивку для: {name}")
+                # Вернем специальный маркер - обработка будет в enrich_orders_with_mapping
+                return "SPLIT", None
         elif response.strip() == '4':
             if order_number and excluded_manager:
                 # Исключаем весь заказ
@@ -612,8 +622,10 @@ def match_product_interactive(
     
     message += "\n\n💡 <b>Варианты ответа:</b>\n"
     message += "• <code>1-5</code> - выбрать вариант по номеру\n"
-    message += "• <code>6</code> - выбрать из каталога (сначала тип, затем товар)\n"
-    message += "• <code>7</code> - разбить на несколько штук"
+    message += "• <code>6</code> - выбрать из каталога (сначала тип, затем товар)"
+    
+    if not skip_split_option:
+        message += "\n• <code>7</code> - разбить на несколько штук"
     
     if order_number and excluded_manager:
         message += f"\n• <code>8</code> - исключить весь заказ {order_number}"
@@ -636,8 +648,15 @@ def match_product_interactive(
         mapped_type = best_match['type']
     elif response.strip() == '7':
         # Разбивка товара
-        logger.info(f"🔧 Пользователь выбрал разбивку для: {name}")
-        return "SPLIT", None
+        if skip_split_option:
+            logger.warning(f"⚠️ Опция разбивки недоступна - используем лучшее совпадение")
+            sync_send_message("⚠️ Опция разбивки недоступна на этом этапе")
+            best_match = matches[0]
+            mapped_name = best_match['name']
+            mapped_type = best_match['type']
+        else:
+            logger.info(f"🔧 Пользователь выбрал разбивку для: {name}")
+            return "SPLIT", None
     elif response.strip() == '8':
         if order_number and excluded_manager:
             excluded_manager.add_excluded(order_number)
@@ -837,6 +856,24 @@ def enrich_orders_with_mapping(
                 # Разбивка успешна - сохраняем список единиц
                 mapping_cache[key] = {'is_split': True, 'split_items': split_items}
                 logger.info(f"✅ Разбит на {len(split_items)} единиц: {item['name'][:50]}...")
+                
+                # После разбивки задаем вопрос заново, но БЕЗ опции разбивки
+                logger.info(f"🔄 Повторное сопоставление после разбивки: {item['name'][:50]}...")
+                mapped_name, mapped_type = match_product_interactive(
+                    item, 
+                    matcher, 
+                    auto_mode=not interactive,
+                    order_number=first_order,
+                    excluded_manager=excluded_manager,
+                    skip_split_option=True  # Не показывать опцию разбивки
+                )
+                
+                # Обновляем маппинг для каждой единицы
+                if mapped_name and mapped_type:
+                    for split_item in split_items:
+                        split_item['mapped_name'] = mapped_name
+                        split_item['mapped_type'] = mapped_type
+                    logger.info(f"✅ Маппинг применен к {len(split_items)} единицам: {mapped_name} ({mapped_type})")
             else:
                 logger.warning(f"⚠️ Разбивка отменена для: {item['name'][:50]}...")
                 # Fallback к обычному маппингу
