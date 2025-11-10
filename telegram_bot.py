@@ -611,11 +611,6 @@ async def cron_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик ошибок."""
-    logger.error(f"Ошибка в боте: {context.error}")
-
-
 async def post_init(application: Application):
     """Настройка бота после инициализации - установка меню команд."""
     commands = [
