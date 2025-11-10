@@ -44,6 +44,7 @@ def main():
     # Путь к файлу-флагу блокировки
     lock_file_path = Path("logs/parser.lock")
     lock_file_path.parent.mkdir(exist_ok=True)
+    lock_file = None  # Инициализация переменной
     
     try:
         # Пытаемся создать файл-флаг блокировки
@@ -537,7 +538,7 @@ def main():
     finally:
         # Удаляем lock файл при любом завершении
         try:
-            if 'lock_file' in locals():
+            if lock_file is not None:
                 lock_file.close()
             if lock_file_path.exists():
                 lock_file_path.unlink()

@@ -225,6 +225,9 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_update(update):
         return
     
+    assert update.message is not None
+    assert update.effective_user is not None
+    
     global parsing_in_progress, current_parser_process
     
     if not parsing_in_progress:
@@ -294,6 +297,9 @@ async def test_antidetect_command(update: Update, context: ContextTypes.DEFAULT_
     """Команда /test_antidetect - тестирование стратегий обхода блокировок."""
     if not check_update(update):
         return
+    
+    assert update.message is not None
+    assert update.effective_user is not None
     
     try:
         logger.info(f"Тестирование антидетекта запрошено пользователем {update.effective_user.id}")
@@ -367,6 +373,9 @@ async def cron_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Команда /cron_status - проверить статус автозапуска."""
     if not check_update(update):
         return
+    
+    assert update.message is not None
+    assert update.effective_user is not None
     
     try:
         logger.info(f"Проверка статуса cron запрошена пользователем {update.effective_user.id}")
@@ -453,6 +462,9 @@ async def cron_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /cron_on - включить автозапуск."""
     if not check_update(update):
         return
+    
+    assert update.message is not None
+    assert update.effective_user is not None
     
     try:
         logger.info(f"Включение cron запрошено пользователем {update.effective_user.id}")
@@ -552,6 +564,9 @@ async def cron_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /cron_off - отключить автозапуск."""
     if not check_update(update):
         return
+    
+    assert update.message is not None
+    assert update.effective_user is not None
     
     try:
         logger.info(f"Отключение cron запрошено пользователем {update.effective_user.id}")
