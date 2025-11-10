@@ -282,20 +282,25 @@ class OzonParser:
             color_text: Текст типа "Цвет: черный, хром, темно-серый"
             
         Returns:
-            "Black" или "White" или исходный текст
+            "Black" или "White" или "0" (некорректный)
         """
         color_text_lower = color_text.lower()
-        
-        # Черные цвета
-        if any(word in color_text_lower for word in ['черн', 'black', 'темн', 'серый', 'grey', 'gray', 'хром']):
-            return 'Black'
         
         # Белые цвета
         if any(word in color_text_lower for word in ['бел', 'white', 'светл']):
             return 'White'
         
-        # Если не определен - возвращаем как есть
-        return color_text
+        # Проверяем что это действительно цвет (содержит хоть какое-то описание цвета)
+        color_keywords = ['черн', 'black', 'темн', 'серый', 'grey', 'gray', 'хром', 
+                         'красн', 'син', 'зелен', 'желт', 'оранж', 'фиолет', 'розов',
+                         'коричнев', 'голуб', 'сер']
+        
+        if any(word in color_text_lower for word in color_keywords):
+            # Все цвета кроме белого = Black
+            return 'Black'
+        
+        # Если не распознан - возвращаем 0 (требует уточнения)
+        return '0'
     
     def _parse_shipment_items(self, shipment_element: ElementHandle, fallback_status: str) -> List[Dict[str, Any]]:
         """
