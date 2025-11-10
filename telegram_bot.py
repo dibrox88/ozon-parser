@@ -20,8 +20,16 @@ last_parse_time = None
 current_parser_process = None  # Текущий процесс парсера для остановки
 
 
+def check_update(update: Update) -> bool:
+    """Проверка что update содержит сообщение и пользователя."""
+    return update.message is not None and update.effective_user is not None
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /start - приветствие и список команд."""
+    if not update.message:
+        return
+    
     welcome_message = (
         "🤖 <b>Ozon Parser Bot</b>\n\n"
         "Доступные команды:\n\n"
@@ -40,6 +48,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /help - справка."""
+    if not update.message:
+        return
+    
     help_message = (
         "ℹ️ <b>Справка по командам:</b>\n\n"
         "<b>/parse</b> - Запустить парсинг Ozon заказов вручную\n"
@@ -76,6 +87,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /status - показать статус парсера."""
+    if not update.message:
+        return
+    
     global parsing_in_progress, last_parse_time
     
     if parsing_in_progress:
@@ -139,11 +153,12 @@ async def monitor_parser_process(update: Update, process: subprocess.Popen):
             # Таймаут - убиваем процесс
             logger.error("⏱️ Парсинг превысил лимит времени (30 мин)")
             process.kill()
-            await update.message.reply_text(
-                "⏱️ <b>Превышено время выполнения</b>\n\n"
-                "Парсинг занял более 30 минут и был остановлен.",
-                parse_mode='HTML'
-            )
+            if update.message:
+                await update.message.reply_text(
+                    "⏱️ <b>Превышено время выполнения</b>\n\n"
+                    "Парсинг занял более 30 минут и был остановлен.",
+                    parse_mode='HTML'
+                )
     
     except Exception as e:
         logger.error(f"❌ Ошибка мониторинга процесса: {e}")
@@ -155,6 +170,9 @@ async def monitor_parser_process(update: Update, process: subprocess.Popen):
 
 async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /parse - запустить парсинг вручную."""
+    if not update.message or not update.effective_user:
+        return
+    
     global parsing_in_progress, last_parse_time, current_parser_process
     
     if parsing_in_progress:
@@ -204,6 +222,9 @@ async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /stop - остановить парсинг."""
+    if not check_update(update):
+        return
+    
     global parsing_in_progress, current_parser_process
     
     if not parsing_in_progress:
@@ -271,6 +292,9 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def test_antidetect_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /test_antidetect - тестирование стратегий обхода блокировок."""
+    if not check_update(update):
+        return
+    
     try:
         logger.info(f"Тестирование антидетекта запрошено пользователем {update.effective_user.id}")
         
@@ -341,6 +365,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 async def cron_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /cron_status - проверить статус автозапуска."""
+    if not check_update(update):
+        return
+    
     try:
         logger.info(f"Проверка статуса cron запрошена пользователем {update.effective_user.id}")
         
@@ -424,6 +451,9 @@ async def cron_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def cron_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /cron_on - включить автозапуск."""
+    if not check_update(update):
+        return
+    
     try:
         logger.info(f"Включение cron запрошено пользователем {update.effective_user.id}")
         
@@ -520,6 +550,9 @@ async def cron_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cron_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /cron_off - отключить автозапуск."""
+    if not check_update(update):
+        return
+    
     try:
         logger.info(f"Отключение cron запрошено пользователем {update.effective_user.id}")
         
