@@ -85,24 +85,25 @@ class TelegramNotifier:
         Returns:
             Ответ пользователя или None
         """
-        # Отправляем промпт
-        await self.send_message(f"⏳ {prompt}")
-        
-        # СРАЗУ ПОСЛЕ ОТПРАВКИ очищаем старые updates БЫСТРО
+        # СНАЧАЛА очищаем старые updates ДО отправки промпта
         try:
-            # Одна попытка с большим лимитом - быстрее чем 3 попытки
+            # Одна попытка с большим лимитом
             updates = await self.bot.get_updates(limit=100, timeout=1)
             if updates:
                 last_update_id = updates[-1].update_id
                 # Подтверждаем все updates
                 await self.bot.get_updates(offset=last_update_id + 1, timeout=1)
-                logger.info(f"✅ Очищено {len(updates)} старых updates")
+                logger.info(f"✅ Очищено {len(updates)} старых updates перед отправкой промпта")
             else:
                 last_update_id = 0
                 logger.info(f"✅ Нет старых updates")
         except Exception as e:
             logger.warning(f"Не удалось очистить старые updates: {e}")
             last_update_id = 0
+        
+        # ТЕПЕРЬ отправляем промпт - пользователь увидит его только после очистки
+        await self.send_message(f"⏳ {prompt}")
+        logger.info(f"📤 Промпт отправлен, ожидаем ответа с update_id > {last_update_id}")
         
         # Если timeout=0, ждем бесконечно
         use_timeout = timeout > 0
