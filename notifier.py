@@ -80,39 +80,40 @@ class TelegramNotifier:
         
         Args:
             prompt: Текст запроса
-            timeout: Таймаут ожидания в секундах
+            timeout: Таймаут ожидания в секундах (0 = без таймаута)
             
         Returns:
             Ответ пользователя или None
         """
+        # Отправляем промпт
         await self.send_message(f"⏳ {prompt}")
         
-        # Получаем последний update ID и очищаем старые сообщения АГРЕССИВНО
+        # СРАЗУ ПОСЛЕ ОТПРАВКИ очищаем старые updates БЫСТРО
         try:
-            # Делаем несколько попыток очистки с увеличенным лимитом
-            for attempt in range(3):
-                updates = await self.bot.get_updates(limit=100, timeout=2)
-                if updates:
-                    last_update_id = updates[-1].update_id
-                    # Подтверждаем все updates
-                    await self.bot.get_updates(offset=last_update_id + 1, timeout=1)
-                    logger.info(f"Попытка {attempt + 1}: Очищено {len(updates)} старых updates")
-                    await asyncio.sleep(0.5)
-                else:
-                    logger.info(f"Попытка {attempt + 1}: Нет старых updates")
-                    break
-            
-            # Финальная очистка
-            updates = await self.bot.get_updates(limit=1, timeout=1)
-            last_update_id = updates[-1].update_id if updates else 0
-            logger.info(f"✅ Готовы принимать новые сообщения, последний ID: {last_update_id}")
+            # Одна попытка с большим лимитом - быстрее чем 3 попытки
+            updates = await self.bot.get_updates(limit=100, timeout=1)
+            if updates:
+                last_update_id = updates[-1].update_id
+                # Подтверждаем все updates
+                await self.bot.get_updates(offset=last_update_id + 1, timeout=1)
+                logger.info(f"✅ Очищено {len(updates)} старых updates")
+            else:
+                last_update_id = 0
+                logger.info(f"✅ Нет старых updates")
         except Exception as e:
             logger.warning(f"Не удалось очистить старые updates: {e}")
             last_update_id = 0
         
+        # Если timeout=0, ждем бесконечно
+        use_timeout = timeout > 0
         start_time = asyncio.get_event_loop().time()
         
-        while (asyncio.get_event_loop().time() - start_time) < timeout:
+        while True:
+            # Проверяем таймаут только если он задан
+            if use_timeout and (asyncio.get_event_loop().time() - start_time) >= timeout:
+                logger.warning("Таймаут ожидания ответа от пользователя")
+                await self.send_message("❌ Время ожидания истекло")
+                return None
             try:
                 # Проверяем новые сообщения
                 updates = await self.bot.get_updates(
@@ -144,14 +145,10 @@ class TelegramNotifier:
                     
             except TelegramError as e:
                 logger.error(f"Ошибка при ожидании ответа: {e}")
-                await asyncio.sleep(2)
+                await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"Неожиданная ошибка при ожидании ответа: {e}")
-                await asyncio.sleep(2)
-        
-        logger.warning("Таймаут ожидания ответа от пользователя")
-        await self.send_message("❌ Время ожидания истекло")
-        return None
+                await asyncio.sleep(1)
 
 
 def sync_send_message(message: str) -> bool:

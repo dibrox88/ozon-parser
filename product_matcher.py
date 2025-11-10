@@ -239,7 +239,7 @@ def clarify_color_if_needed(color: str, item_name: str) -> str:
         
         sync_send_message(message)
         
-        response = sync_wait_for_input("Выберите цвет (1 или 2):", timeout=180)
+        response = sync_wait_for_input("Выберите цвет (1 или 2):", timeout=0)  # Без таймаута
         
         if response and response.strip() == '2':
             logger.info(f"✅ Пользователь выбрал цвет: White")
@@ -293,7 +293,7 @@ def split_product_into_units(
     sync_send_message(message)
     
     from notifier import sync_wait_for_input
-    units_input = sync_wait_for_input("Введите количество штук или CANCEL:", timeout=180)
+    units_input = sync_wait_for_input("Введите количество штук или CANCEL:", timeout=0)  # Без таймаута
     
     if not units_input or units_input.upper() == 'CANCEL':
         sync_send_message("❌ Разбивка отменена")
@@ -503,7 +503,7 @@ def match_product_interactive(
             type_list_msg = matcher.get_type_list_message()
             sync_send_message(f"{type_list_msg}\n\n⏳ Введите номер типа:")
             
-            type_response = sync_wait_for_input("Введите номер типа:", timeout=180)
+            type_response = sync_wait_for_input("Введите номер типа:", timeout=0)  # Без таймаута
             
             if not type_response or not type_response.strip().isdigit():
                 logger.warning(f"⚠️ Некорректный выбор типа - используем тип по умолчанию для: {name}")
@@ -546,7 +546,7 @@ def match_product_interactive(
                         
                         product_response = sync_wait_for_input(
                             f"Введите номер товара (1-{len(products_to_show)}):",
-                            timeout=180
+                            timeout=0  # Без таймаута
                         )
                         
                         if not product_response or not product_response.strip().isdigit():
@@ -657,7 +657,7 @@ def match_product_interactive(
         type_list_msg = matcher.get_type_list_message()
         sync_send_message(f"{type_list_msg}\n\n⏳ Введите номер типа:")
         
-        type_response = sync_wait_for_input("Введите номер типа:", timeout=180)
+        type_response = sync_wait_for_input("Введите номер типа:", timeout=0)  # Без таймаута
         
         if not type_response or not type_response.strip().isdigit():
             logger.warning(f"⚠️ Некорректный выбор типа - используем лучшее совпадение")
@@ -703,7 +703,7 @@ def match_product_interactive(
                     
                     product_response = sync_wait_for_input(
                         f"Введите номер товара (1-{len(products_to_show)}):",
-                        timeout=180
+                        timeout=0  # Без таймаута
                     )
                     
                     if not product_response or not product_response.strip().isdigit():

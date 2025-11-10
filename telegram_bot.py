@@ -324,71 +324,19 @@ async def test_antidetect_command(update: Update, context: ContextTypes.DEFAULT_
         )
 
 
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /stop - остановить парсинг."""
-    global parsing_in_progress, current_parser_process
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик ошибок бота."""
+    logger.error(f"❌ Ошибка в боте: {context.error}")
     
-    if not parsing_in_progress:
-        await update.message.reply_text(
-            "ℹ️ <b>Парсер не запущен</b>\n\n"
-            "Нечего останавливать. Используйте /status для проверки состояния.",
-            parse_mode='HTML'
-        )
-        return
-    
-    if current_parser_process is None:
-        await update.message.reply_text(
-            "⚠️ <b>Не удалось найти процесс парсера</b>\n\n"
-            "Возможно, он был запущен извне бота.",
-            parse_mode='HTML'
-        )
-        parsing_in_progress = False
-        return
-    
-    try:
-        logger.info(f"Остановка парсера запрошена пользователем {update.effective_user.id}")
-        
-        await update.message.reply_text(
-            "⏹️ <b>Останавливаю парсер...</b>",
-            parse_mode='HTML'
-        )
-        
-        # Пытаемся корректно завершить процесс
-        current_parser_process.terminate()
-        
-        # Даем 5 секунд на завершение
+    if update and isinstance(update, Update) and update.effective_message:
         try:
-            current_parser_process.wait(timeout=5)
-            logger.info("✅ Парсер остановлен корректно")
-            
-            await update.message.reply_text(
-                "✅ <b>Парсер остановлен</b>\n\n"
-                "Процесс завершен корректно.",
+            await update.effective_message.reply_text(
+                f"❌ <b>Произошла ошибка</b>\n\n"
+                f"Пожалуйста, попробуйте еще раз или обратитесь к администратору.",
                 parse_mode='HTML'
             )
-        
-        except subprocess.TimeoutExpired:
-            # Если не завершился - убиваем принудительно
-            logger.warning("⚠️ Процесс не завершился за 5 секунд, принудительное завершение")
-            current_parser_process.kill()
-            current_parser_process.wait()
-            
-            await update.message.reply_text(
-                "✅ <b>Парсер остановлен принудительно</b>\n\n"
-                "Процесс был завершен жестко (kill signal).",
-                parse_mode='HTML'
-            )
-    
-    except Exception as e:
-        logger.error(f"❌ Ошибка при остановке парсера: {e}")
-        await update.message.reply_text(
-            f"❌ <b>Ошибка при остановке</b>\n\n{str(e)}",
-            parse_mode='HTML'
-        )
-    
-    finally:
-        parsing_in_progress = False
-        current_parser_process = None
+        except Exception as e:
+            logger.error(f"Не удалось отправить сообщение об ошибке: {e}")
 
 
 async def cron_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
