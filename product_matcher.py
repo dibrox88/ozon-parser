@@ -208,6 +208,50 @@ class ProductMatcher:
         return matches[:5]  # Топ-5
 
 
+def clarify_color_if_needed(color: str, item_name: str) -> str:
+    """
+    Уточнить цвет у пользователя если он некорректный (0).
+    
+    Args:
+        color: Текущий цвет ('Black', 'White', '0' или '')
+        item_name: Название товара для контекста
+        
+    Returns:
+        Уточнённый цвет ('Black' или 'White')
+    """
+    from notifier import sync_send_message, sync_wait_for_input
+    
+    # Если цвет не определён или некорректный - уточняем
+    if not color or color == '0':
+        logger.info(f"⚠️ Требуется уточнение цвета для: {item_name}")
+        
+        message = f"""
+🎨 <b>УТОЧНЕНИЕ ЦВЕТА</b>
+
+📦 Товар: {item_name}
+⚠️ Цвет не определён или некорректный: <code>{color or 'не указан'}</code>
+
+💡 <b>Выберите цвет:</b>
+1. Отправьте <code>1</code> - Black (чёрный)
+2. Отправьте <code>2</code> - White (белый)
+
+⏳ Ожидаю ваш ответ..."""
+        
+        sync_send_message(message)
+        
+        response = sync_wait_for_input("Выберите цвет (1 или 2):", timeout=180)
+        
+        if response and response.strip() == '2':
+            logger.info(f"✅ Пользователь выбрал цвет: White")
+            return 'White'
+        else:
+            # По умолчанию Black (если 1 или таймаут)
+            logger.info(f"✅ Пользователь выбрал цвет: Black (или таймаут)")
+            return 'Black'
+    
+    return color
+
+
 def split_product_into_units(
     item: Dict,
     matcher: ProductMatcher,
@@ -375,18 +419,29 @@ def match_product_interactive(
             mapped_name = name
             mapped_type = matcher.DEFAULT_TYPE
         
+        # Уточняем цвет если он некорректный (0) или не указан
+        color = clarify_color_if_needed(color, name)
+        
         matcher.save_mapping(name, color, mapped_name, mapped_type)
         return mapped_name, mapped_type
     
     # Интерактивный режим: запрашиваем у пользователя
     if not matches:
+        # Преобразуем цвет для отображения
+        display_color = color if color and color != '0' else 'не указан'
+        color_status = ""
+        if color == '0':
+            color_status = " ⚠️ (требует уточнения)"
+        elif color in ['Black', 'White']:
+            color_status = f" ✅ (преобразован в {color})"
+        
         # Нет совпадений - предлагаем ручной ввод
         message = f"""
 🔍 <b>Товар НЕ НАЙДЕН в каталоге</b>
 
 📦 <b>Товар из заказа:</b>
 • Название: {name}
-• Цвет: {color or 'не указан'}
+• Цвет: {display_color}{color_status}
 • Количество: {quantity}
 • Цена: {price} ₽"""
         
@@ -514,16 +569,27 @@ def match_product_interactive(
             mapped_name = name
             mapped_type = matcher.DEFAULT_TYPE
         
+        # Уточняем цвет если он некорректный (0) или не указан
+        color = clarify_color_if_needed(color, name)
+        
         matcher.save_mapping(name, color, mapped_name, mapped_type)
         return mapped_name, mapped_type
     
     # Есть совпадения, но не 100% - показываем варианты
+    # Преобразуем цвет для отображения
+    display_color = color if color and color != '0' else 'не указан'
+    color_status = ""
+    if color == '0':
+        color_status = " ⚠️ (требует уточнения)"
+    elif color in ['Black', 'White']:
+        color_status = f" ✅ (преобразован в {color})"
+    
     message = f"""
 🔍 <b>Найдены похожие товары</b>
 
 📦 <b>Товар из заказа:</b>
 • Название: {name}
-• Цвет: {color or 'не указан'}
+• Цвет: {display_color}{color_status}
 • Количество: {quantity}
 • Цена: {price} ₽"""
     
@@ -676,6 +742,9 @@ def match_product_interactive(
         best_match = matches[0]
         mapped_name = best_match['name']
         mapped_type = best_match['type']
+    
+    # Уточняем цвет если он некорректный (0) или не указан
+    color = clarify_color_if_needed(color, name)
     
     # Сохраняем сопоставление
     matcher.save_mapping(name, color, mapped_name, mapped_type)
