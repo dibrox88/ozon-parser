@@ -638,16 +638,24 @@ class OzonParser:
             sync_send_message(f"❌ Ошибка при парсинге заказа {order_number}: {str(e)}")
             return None
     
-    def parse_orders(self) -> List[str]:
+    def parse_orders(self, first_order: Optional[str] = None, last_order: Optional[str] = None) -> List[str]:
         """
         Парсинг списка заказов.
+        
+        Args:
+            first_order: Номер первого заказа для фильтрации (например, "46206571-0680")
+            last_order: Номер последнего заказа для фильтрации (например, "46206571-0710")
         
         Returns:
             Список уникальных номеров заказов, отсортированных по возрастанию
         """
         try:
             logger.info("Начинаем парсинг заказов")
-            sync_send_message("🔍 Начинаем парсинг номеров заказов...")
+            if first_order and last_order:
+                logger.info(f"📊 Режим диапазона: {first_order} - {last_order}")
+                sync_send_message(f"🔍 Парсинг диапазона:\n<code>{first_order}</code> → <code>{last_order}</code>")
+            else:
+                sync_send_message("🔍 Начинаем парсинг номеров заказов...")
             
             # Ждем загрузки страницы
             time.sleep(2)
@@ -674,6 +682,16 @@ class OzonParser:
             
             # Убираем дубликаты и сортируем
             unique_orders = sorted(list(order_numbers))
+            
+            # Фильтруем по диапазону если указан
+            if first_order and last_order:
+                logger.info(f"📊 Фильтруем заказы по диапазону: {first_order} - {last_order}")
+                filtered_orders = []
+                for order in unique_orders:
+                    if first_order <= order <= last_order:
+                        filtered_orders.append(order)
+                logger.info(f"✅ После фильтрации осталось: {len(filtered_orders)} заказов")
+                unique_orders = filtered_orders
             
             # Логируем результаты
             logger.info(f"✅ Найдено уникальных заказов: {len(unique_orders)}")

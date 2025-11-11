@@ -34,6 +34,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 <b>Ozon Parser Bot</b>\n\n"
         "Доступные команды:\n\n"
         "/parse - Запустить парсинг вручную\n"
+        "/parse_range - 📊 Парсинг диапазона заказов\n"
         "/stop - Остановить парсинг\n"
         "/status - Показать статус парсера\n"
         "/test_antidetect - 🧪 Тест обхода блокировок\n"
@@ -57,6 +58,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  • Парсит новые заказы\n"
         "  • Обновляет Google Sheets\n"
         "  • Отправляет уведомления о ходе работы\n\n"
+        "<b>/parse_range</b> - 📊 Парсинг диапазона заказов\n"
+        "  • Запрашивает номер последнего заказа (например, 0710)\n"
+        "  • Запрашивает количество заказов (например, 30)\n"
+        "  • Парсит заказы от (710-30=680) до 710\n"
+        "  • Формат: 46206571-0680 по 46206571-0710\n\n"
         "<b>/stop</b> - Остановить текущий парсинг\n"
         "  • Принудительно завершает работающий процесс\n"
         "  • Закрывает браузер и освобождает ресурсы\n\n"
@@ -291,6 +297,152 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         parsing_in_progress = False
         current_parser_process = None
+
+
+async def parse_range_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /parse_range - парсинг диапазона заказов."""
+    if not check_update(update):
+        return
+    
+    assert update.message is not None
+    assert update.effective_user is not None
+    
+    global parsing_in_progress
+    
+    if parsing_in_progress:
+        await update.message.reply_text(
+            "⚠️ <b>Парсер уже работает</b>\n\n"
+            "Дождитесь завершения текущего парсинга.",
+            parse_mode='HTML'
+        )
+        return
+    
+    try:
+        # Шаг 1: Запрос последнего номера заказа
+        await update.message.reply_text(
+            "📋 <b>Парсинг диапазона заказов</b>\n\n"
+            "⏳ Введите номер последнего заказа (например, <code>0710</code>):",
+            parse_mode='HTML'
+        )
+        
+        from notifier import TelegramNotifier
+        notifier = TelegramNotifier()
+        
+        # Ожидаем номер последнего заказа
+        last_order_input = await notifier.wait_for_user_input(
+            "Введите номер последнего заказа (например, 0710):",
+            timeout=300
+        )
+        
+        if not last_order_input:
+            await update.message.reply_text(
+                "❌ <b>Таймаут</b>\n\nВремя ожидания истекло.",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Парсим номер последнего заказа
+        try:
+            last_order_num = int(last_order_input.strip().lstrip('0') or '0')
+            if last_order_num <= 0:
+                await update.message.reply_text(
+                    "❌ <b>Некорректный номер</b>\n\nНомер должен быть положительным числом.",
+                    parse_mode='HTML'
+                )
+                return
+        except ValueError:
+            await update.message.reply_text(
+                f"❌ <b>Некорректный формат</b>\n\nНе удалось распознать номер: {last_order_input}",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Шаг 2: Запрос количества заказов
+        await update.message.reply_text(
+            f"✅ Последний заказ: <code>{last_order_num:04d}</code>\n\n"
+            f"⏳ Введите количество заказов для парсинга (например, <code>30</code>):",
+            parse_mode='HTML'
+        )
+        
+        count_input = await notifier.wait_for_user_input(
+            "Введите количество заказов:",
+            timeout=300
+        )
+        
+        if not count_input:
+            await update.message.reply_text(
+                "❌ <b>Таймаут</b>\n\nВремя ожидания истекло.",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Парсим количество
+        try:
+            count = int(count_input.strip())
+            if count <= 0 or count > 1000:
+                await update.message.reply_text(
+                    "❌ <b>Некорректное количество</b>\n\nДолжно быть от 1 до 1000.",
+                    parse_mode='HTML'
+                )
+                return
+        except ValueError:
+            await update.message.reply_text(
+                f"❌ <b>Некорректный формат</b>\n\nНе удалось распознать число: {count_input}",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Вычисляем диапазон
+        first_order_num = last_order_num - count + 1
+        if first_order_num < 0:
+            first_order_num = 0
+        
+        first_order = f"46206571-{first_order_num:04d}"
+        last_order = f"46206571-{last_order_num:04d}"
+        
+        # Подтверждение
+        await update.message.reply_text(
+            f"📊 <b>Параметры парсинга:</b>\n\n"
+            f"• Первый заказ: <code>{first_order}</code>\n"
+            f"• Последний заказ: <code>{last_order}</code>\n"
+            f"• Всего заказов: <b>{count}</b>\n\n"
+            f"🚀 Запускаю парсинг...",
+            parse_mode='HTML'
+        )
+        
+        # Запускаем парсинг
+        parsing_in_progress = True
+        global last_parse_time, current_parser_process
+        last_parse_time = datetime.now()
+        
+        logger.info(f"Запуск парсинга диапазона {first_order} - {last_order}")
+        
+        # Запускаем main.py с параметрами диапазона
+        import sys
+        python_executable = sys.executable
+        script_path = os.path.join(os.path.dirname(__file__), "main.py")
+        
+        process = subprocess.Popen(
+            [python_executable, script_path, "--range", first_order, last_order],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        
+        current_parser_process = process
+        
+        # Запускаем мониторинг в фоновом режиме
+        asyncio.create_task(monitor_parser_process(update, process))
+        
+        logger.info(f"Парсер запущен с PID: {process.pid}")
+    
+    except Exception as e:
+        logger.error(f"❌ Ошибка при запуске парсинга диапазона: {e}")
+        await update.message.reply_text(
+            f"❌ <b>Ошибка запуска</b>\n\n{str(e)}",
+            parse_mode='HTML'
+        )
+        parsing_in_progress = False
 
 
 async def test_antidetect_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -688,6 +840,7 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("parse", parse_command))
+    application.add_handler(CommandHandler("parse_range", parse_range_command))
     application.add_handler(CommandHandler("stop", stop_command))
     application.add_handler(CommandHandler("test_antidetect", test_antidetect_command))
     application.add_handler(CommandHandler("cron_status", cron_status_command))

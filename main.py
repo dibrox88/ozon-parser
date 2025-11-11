@@ -41,6 +41,13 @@ from session_manager import SessionManager
 
 def main():
     """Главная функция."""
+    # Парсинг аргументов командной строки
+    import argparse
+    parser_args = argparse.ArgumentParser(description='Ozon Parser')
+    parser_args.add_argument('--range', nargs=2, metavar=('FIRST', 'LAST'),
+                            help='Parse range of orders (e.g., --range 46206571-0680 46206571-0710)')
+    args = parser_args.parse_args()
+    
     # Путь к файлу-флагу блокировки
     lock_file_path = Path("logs/parser.lock")
     lock_file_path.parent.mkdir(exist_ok=True)
@@ -314,8 +321,12 @@ def main():
                     browser.close()
                     sys.exit(1)
                 
-                # Получаем список заказов
-                orders = parser.parse_orders()
+                # Получаем список заказов (с диапазоном если указан)
+                if args.range:
+                    first_order, last_order = args.range
+                    orders = parser.parse_orders(first_order=first_order, last_order=last_order)
+                else:
+                    orders = parser.parse_orders()
                 
                 logger.info(f"Парсинг номеров завершен. Получено заказов: {len(orders)}")
                 sync_send_message(f"✅ <b>Найдено заказов: {len(orders)}</b>\n\nНачинаем парсинг деталей...")
