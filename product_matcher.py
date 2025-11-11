@@ -939,6 +939,9 @@ def enrich_orders_with_mapping(
                         split_item['mapped_name'] = mapped_name
                         split_item['mapped_type'] = mapped_type
                     logger.info(f"✅ Маппинг применен к {len(split_items)} единицам: {mapped_name} ({mapped_type})")
+                
+                # ВАЖНО: НЕ перезаписываем mapping_cache - разбивка уже сохранена выше!
+                # mapping_cache[key] уже содержит {'is_split': True, 'split_items': split_items}
             else:
                 logger.warning(f"⚠️ Разбивка отменена для: {item['name'][:50]}...")
                 # Fallback к обычному маппингу
@@ -989,9 +992,9 @@ def enrich_orders_with_mapping(
                     # Добавляем каждую единицу как отдельную строку
                     for split_item in split_items:
                         enriched_item = split_item.copy()
-                        # Применяем маппинг если есть
-                        enriched_item['mapped_name'] = split_item['name']
-                        enriched_item['mapped_type'] = matcher.DEFAULT_TYPE
+                        # Применяем маппинг - используем уже установленные значения из split_item
+                        enriched_item['mapped_name'] = split_item.get('mapped_name', split_item['name'])
+                        enriched_item['mapped_type'] = split_item.get('mapped_type', matcher.DEFAULT_TYPE)
                         enriched_items.append(enriched_item)
                         matched_items += 1
                     logger.info(f"📦 Добавлено {len(split_items)} единиц для: {item['name'][:30]}")
