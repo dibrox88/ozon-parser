@@ -722,7 +722,9 @@ class OzonParser:
                 message = f"✅ <b>Найдено заказов: {len(unique_orders)}</b>\n\n"
                 message += "📋 Номера заказов:\n"
                 for idx, order_num in enumerate(unique_orders, 1):
-                    message += f"{idx}. <code>{order_num}</code>\n"
+                    # Добавляем ссылку на заказ в Ozon
+                    order_url = f"https://www.ozon.ru/my/orderinfo/{order_num}"
+                    message += f"{idx}. <a href=\"{order_url}\">{order_num}</a>\n"
                 
                 sync_send_message(message)
             else:
