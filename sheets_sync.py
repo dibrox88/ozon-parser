@@ -616,10 +616,8 @@ class SheetsSynchronizer:
             if self.worksheet is None or not sorted_rows:
                 return
             
-            requests = []
-            
             # СНАЧАЛА очищаем все границы в диапазоне вставленных строк
-            # Это предотвращает копирование форматирования при вставке
+            # Отправляем ОТДЕЛЬНЫМ запросом для гарантии порядка выполнения
             clear_borders_request = {
                 "updateBorders": {
                     "range": {
@@ -635,8 +633,14 @@ class SheetsSynchronizer:
                     "right": {"style": "NONE"}
                 }
             }
-            requests.append(clear_borders_request)
-            logger.info(f"🧹 Очищены границы в диапазоне строк {start_row}-{start_row + num_rows - 1}")
+            
+            # Отправляем очистку ОТДЕЛЬНО
+            if self.spreadsheet:
+                self.spreadsheet.batch_update({"requests": [clear_borders_request]})
+                logger.info(f"🧹 Очищены границы в диапазоне строк {start_row}-{start_row + num_rows - 1}")
+            
+            # ТЕПЕРЬ создаем запросы для добавления границ
+            requests = []
             
             # 1. Находим границы заказов (для верхней линии 1px)
             order_borders = []
