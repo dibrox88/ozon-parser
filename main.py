@@ -39,6 +39,25 @@ from notifier import sync_send_message
 from session_manager import SessionManager
 
 
+def cleanup_lock_file(lock_file, lock_file_path):
+    """
+    Очистка lock файла.
+    КРИТИЧНО: Должна вызываться ПЕРЕД os._exit() для корректной работы блокировок.
+    
+    Args:
+        lock_file: Открытый файловый дескриптор
+        lock_file_path: Path объект к lock файлу
+    """
+    try:
+        if lock_file is not None:
+            lock_file.close()
+        if lock_file_path.exists():
+            lock_file_path.unlink()
+            logger.info("🔓 Lock файл удалён")
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось удалить lock файл: {e}")
+
+
 def main():
     """Главная функция."""
     # Парсинг аргументов командной строки
@@ -543,6 +562,10 @@ def main():
             logger.info("Работа завершена успешно")
             sync_send_message("✅ <b>Работа завершена</b>")
             
+            # КРИТИЧНО: Удаляем lock файл ПЕРЕД os._exit()
+            # т.к. os._exit() не выполняет блок finally
+            cleanup_lock_file(lock_file, lock_file_path)
+            
             # Явно завершаем программу, чтобы избежать зависания
             # Используем os._exit(0) вместо sys.exit(0), чтобы избежать
             # блокировки на p.__exit__() в блоке with sync_playwright()
@@ -567,14 +590,9 @@ def main():
     
     finally:
         # Удаляем lock файл при любом завершении
-        try:
-            if lock_file is not None:
-                lock_file.close()
-            if lock_file_path.exists():
-                lock_file_path.unlink()
-                logger.info("🔓 Lock файл удалён")
-        except Exception as e:
-            logger.warning(f"⚠️ Не удалось удалить lock файл: {e}")
+        # Примечание: Этот блок НЕ выполнится после os._exit(0) в успешном сценарии
+        # Lock файл уже будет удален через cleanup_lock_file() перед os._exit()
+        cleanup_lock_file(lock_file, lock_file_path)
 
 
 if __name__ == '__main__':
