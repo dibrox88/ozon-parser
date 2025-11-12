@@ -10,7 +10,7 @@ import signal
 import io
 from datetime import datetime
 from telegram import Update, BotCommand
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters
 from loguru import logger
 from config import Config
 
@@ -18,6 +18,9 @@ from config import Config
 parsing_in_progress = False
 last_parse_time = None
 current_parser_process = None  # Текущий процесс парсера для остановки
+
+# Состояния для ConversationHandler (parse_range)
+WAITING_LAST_ORDER, WAITING_COUNT = range(2)
 
 
 def check_update(update: Update) -> bool:
@@ -62,7 +65,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  • Запрашивает номер последнего заказа (например, 0710)\n"
         "  • Запрашивает количество заказов (например, 30)\n"
         "  • Парсит заказы от (710-30=680) до 710\n"
-        "  • Формат: 46206571-0680 по 46206571-0710\n\n"
+        "  • Формат: 46206571-0680 по 46206571-0710\n"
+        "  • Для отмены: /cancel\n\n"
         "<b>/stop</b> - Остановить текущий парсинг\n"
         "  • Принудительно завершает работающий процесс\n"
         "  • Закрывает браузер и освобождает ресурсы\n\n"
@@ -299,10 +303,10 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current_parser_process = None
 
 
-async def parse_range_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /parse_range - парсинг диапазона заказов."""
+async def parse_range_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Начало conversation для /parse_range - запрос последнего номера заказа."""
     if not check_update(update):
-        return
+        return ConversationHandler.END
     
     assert update.message is not None
     assert update.effective_user is not None
@@ -315,102 +319,136 @@ async def parse_range_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Дождитесь завершения текущего парсинга.",
             parse_mode='HTML'
         )
-        return
+        return ConversationHandler.END
     
+    await update.message.reply_text(
+        "⏳ 📋 <b>Парсинг диапазона заказов</b>\n\n"
+        "Введите номер <b>последнего</b> заказа после дефиса.\n"
+        "Например: <code>0710</code> для заказа 46206571-0710\n\n"
+        "Для отмены отправьте /cancel",
+        parse_mode='HTML'
+    )
+    
+    return WAITING_LAST_ORDER
+
+
+async def parse_range_last_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка последнего номера заказа."""
+    if not check_update(update):
+        return ConversationHandler.END
+    
+    assert update.message is not None
+    assert update.message.text is not None
+    
+    last_order_input = update.message.text.strip()
+    
+    # Парсим номер последнего заказа
     try:
-        from notifier import TelegramNotifier
-        notifier = TelegramNotifier()
-        
-        # Шаг 1: Запрос последнего номера заказа
-        # wait_for_user_input сам отправит сообщение с промптом
-        last_order_input = await notifier.wait_for_user_input(
-            "📋 Парсинг диапазона заказов\n\nВведите номер последнего заказа (например, 0710):",
-            timeout=300
-        )
-        
-        if not last_order_input:
+        last_order_num = int(last_order_input.lstrip('0') or '0')
+        if last_order_num <= 0:
             await update.message.reply_text(
-                "❌ <b>Таймаут</b>\n\nВремя ожидания истекло.",
+                "❌ <b>Некорректный номер</b>\n\n"
+                "Номер должен быть положительным числом.\n"
+                "Попробуйте еще раз:",
                 parse_mode='HTML'
             )
-            return
-        
-        # Парсим номер последнего заказа
-        try:
-            last_order_num = int(last_order_input.strip().lstrip('0') or '0')
-            if last_order_num <= 0:
-                await update.message.reply_text(
-                    "❌ <b>Некорректный номер</b>\n\nНомер должен быть положительным числом.",
-                    parse_mode='HTML'
-                )
-                return
-        except ValueError:
-            await update.message.reply_text(
-                f"❌ <b>Некорректный формат</b>\n\nНе удалось распознать номер: {last_order_input}",
-                parse_mode='HTML'
-            )
-            return
-        
-        # Шаг 2: Запрос количества заказов
-        # wait_for_user_input сам отправит сообщение
-        count_input = await notifier.wait_for_user_input(
-            f"✅ Последний заказ: {last_order_num:04d}\n\nВведите количество заказов для парсинга (например, 30):",
-            timeout=300
-        )
-        
-        if not count_input:
-            await update.message.reply_text(
-                "❌ <b>Таймаут</b>\n\nВремя ожидания истекло.",
-                parse_mode='HTML'
-            )
-            return
-        
-        # Парсим количество
-        try:
-            count = int(count_input.strip())
-            if count <= 0 or count > 1000:
-                await update.message.reply_text(
-                    "❌ <b>Некорректное количество</b>\n\nДолжно быть от 1 до 1000.",
-                    parse_mode='HTML'
-                )
-                return
-        except ValueError:
-            await update.message.reply_text(
-                f"❌ <b>Некорректный формат</b>\n\nНе удалось распознать число: {count_input}",
-                parse_mode='HTML'
-            )
-            return
-        
-        # Вычисляем диапазон
-        first_order_num = last_order_num - count + 1
-        if first_order_num < 0:
-            first_order_num = 0
-        
-        first_order = f"46206571-{first_order_num:04d}"
-        last_order = f"46206571-{last_order_num:04d}"
-        
-        # Подтверждение
+            return WAITING_LAST_ORDER
+    except ValueError:
         await update.message.reply_text(
-            f"📊 <b>Параметры парсинга:</b>\n\n"
-            f"• Первый заказ: <code>{first_order}</code>\n"
-            f"• Последний заказ: <code>{last_order}</code>\n"
-            f"• Всего заказов: <b>{count}</b>\n\n"
-            f"🚀 Запускаю парсинг...",
+            f"❌ <b>Некорректный формат</b>\n\n"
+            f"Не удалось распознать номер: {last_order_input}\n"
+            f"Попробуйте еще раз:",
             parse_mode='HTML'
         )
-        
-        # Запускаем парсинг
-        parsing_in_progress = True
-        global last_parse_time, current_parser_process
-        last_parse_time = datetime.now()
-        
-        logger.info(f"Запуск парсинга диапазона {first_order} - {last_order}")
-        
-        # Запускаем main.py с параметрами диапазона
-        import sys
-        python_executable = sys.executable
-        script_path = os.path.join(os.path.dirname(__file__), "main.py")
-        
+        return WAITING_LAST_ORDER
+    
+    # Сохраняем в контексте
+    if context.user_data is not None:
+        context.user_data['last_order_num'] = last_order_num
+    
+    await update.message.reply_text(
+        f"✅ Последний заказ: <code>{last_order_num:04d}</code>\n\n"
+        f"Теперь введите <b>количество</b> заказов для парсинга.\n"
+        f"Например: <code>30</code> (от 1 до 1000)",
+        parse_mode='HTML'
+    )
+    
+    return WAITING_COUNT
+
+
+async def parse_range_count(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка количества заказов и запуск парсинга."""
+    if not check_update(update):
+        return ConversationHandler.END
+    
+    assert update.message is not None
+    assert update.message.text is not None
+    
+    count_input = update.message.text.strip()
+    
+    # Парсим количество
+    try:
+        count = int(count_input)
+        if count <= 0 or count > 1000:
+            await update.message.reply_text(
+                "❌ <b>Некорректное количество</b>\n\n"
+                "Должно быть от 1 до 1000.\n"
+                "Попробуйте еще раз:",
+                parse_mode='HTML'
+            )
+            return WAITING_COUNT
+    except ValueError:
+        await update.message.reply_text(
+            f"❌ <b>Некорректный формат</b>\n\n"
+            f"Не удалось распознать число: {count_input}\n"
+            f"Попробуйте еще раз:",
+            parse_mode='HTML'
+        )
+        return WAITING_COUNT
+    
+    # Получаем last_order_num из контекста
+    last_order_num = None
+    if context.user_data is not None:
+        last_order_num = context.user_data.get('last_order_num')
+    
+    if last_order_num is None:
+        await update.message.reply_text(
+            "❌ <b>Ошибка</b>\n\nСессия истекла. Начните заново с /parse_range",
+            parse_mode='HTML'
+        )
+        return ConversationHandler.END
+    
+    # Вычисляем диапазон
+    first_order_num = last_order_num - count + 1
+    if first_order_num < 0:
+        first_order_num = 0
+    
+    first_order = f"46206571-{first_order_num:04d}"
+    last_order = f"46206571-{last_order_num:04d}"
+    
+    # Подтверждение
+    await update.message.reply_text(
+        f"📊 <b>Параметры парсинга:</b>\n\n"
+        f"• Первый заказ: <code>{first_order}</code>\n"
+        f"• Последний заказ: <code>{last_order}</code>\n"
+        f"• Всего заказов: <b>{count}</b>\n\n"
+        f"🚀 Запускаю парсинг...",
+        parse_mode='HTML'
+    )
+    
+    # Запускаем парсинг
+    global parsing_in_progress, last_parse_time, current_parser_process
+    parsing_in_progress = True
+    last_parse_time = datetime.now()
+    
+    logger.info(f"Запуск парсинга диапазона {first_order} - {last_order}")
+    
+    # Запускаем main.py с параметрами диапазона
+    import sys
+    python_executable = sys.executable
+    script_path = os.path.join(os.path.dirname(__file__), "main.py")
+    
+    try:
         process = subprocess.Popen(
             [python_executable, script_path, "--range", first_order, last_order],
             stdout=subprocess.PIPE,
@@ -432,6 +470,30 @@ async def parse_range_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode='HTML'
         )
         parsing_in_progress = False
+    
+    # Очищаем контекст
+    if context.user_data is not None:
+        context.user_data.clear()
+    
+    return ConversationHandler.END
+
+
+async def parse_range_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Отмена conversation."""
+    if not check_update(update):
+        return ConversationHandler.END
+    
+    assert update.message is not None
+    
+    await update.message.reply_text(
+        "❌ <b>Отменено</b>\n\nПарсинг диапазона отменён.",
+        parse_mode='HTML'
+    )
+    
+    if context.user_data is not None:
+        context.user_data.clear()
+    
+    return ConversationHandler.END
 
 
 async def test_antidetect_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -830,7 +892,19 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("parse", parse_command))
-    application.add_handler(CommandHandler("parse_range", parse_range_command))
+    
+    # ConversationHandler для /parse_range
+    parse_range_handler = ConversationHandler(
+        entry_points=[CommandHandler("parse_range", parse_range_start)],
+        states={
+            WAITING_LAST_ORDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, parse_range_last_order)],
+            WAITING_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, parse_range_count)],
+        },
+        fallbacks=[CommandHandler("cancel", parse_range_cancel)],
+        conversation_timeout=600  # 10 минут таймаут
+    )
+    application.add_handler(parse_range_handler)
+    
     application.add_handler(CommandHandler("stop", stop_command))
     application.add_handler(CommandHandler("test_antidetect", test_antidetect_command))
     application.add_handler(CommandHandler("cron_status", cron_status_command))
