@@ -903,7 +903,31 @@ async def cron_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def post_init(application: Application):
-    """Настройка бота после инициализации - установка меню команд."""
+    """Настройка бота после инициализации - установка меню команд и проверка процессов."""
+    global parsing_in_progress, current_parser_process
+    
+    # Проверяем, есть ли реально запущенный парсер
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "python.*main.py"],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            # Нет запущенных процессов парсера - сбрасываем флаги
+            if parsing_in_progress or current_parser_process is not None:
+                logger.warning("⚠️ Обнаружены некорректные флаги при старте (нет процессов парсера)")
+                parsing_in_progress = False
+                current_parser_process = None
+                logger.info("✅ Флаги parsing_in_progress и current_parser_process сброшены")
+        else:
+            # Есть запущенные процессы парсера
+            pids = result.stdout.strip().split('\n')
+            logger.warning(f"⚠️ Обнаружены запущенные процессы парсера: {', '.join(pids)}")
+            parsing_in_progress = True
+    except Exception as e:
+        logger.error(f"❌ Ошибка проверки процессов парсера: {e}")
+    
     commands = [
         BotCommand("start", "🏠 Главное меню"),
         BotCommand("parse", "🚀 Запустить парсинг"),
