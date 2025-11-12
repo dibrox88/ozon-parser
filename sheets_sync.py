@@ -618,6 +618,26 @@ class SheetsSynchronizer:
             
             requests = []
             
+            # СНАЧАЛА очищаем все границы в диапазоне вставленных строк
+            # Это предотвращает копирование форматирования при вставке
+            clear_borders_request = {
+                "updateBorders": {
+                    "range": {
+                        "sheetId": self.worksheet.id,
+                        "startRowIndex": start_row - 1,  # -1 для 0-индексации
+                        "endRowIndex": start_row + num_rows - 1,
+                        "startColumnIndex": 0,  # A
+                        "endColumnIndex": 9     # I (не включительно)
+                    },
+                    "top": {"style": "NONE"},
+                    "bottom": {"style": "NONE"},
+                    "left": {"style": "NONE"},
+                    "right": {"style": "NONE"}
+                }
+            }
+            requests.append(clear_borders_request)
+            logger.info(f"🧹 Очищены границы в диапазоне строк {start_row}-{start_row + num_rows - 1}")
+            
             # 1. Находим границы заказов (для верхней линии 1px)
             order_borders = []
             current_order = None
