@@ -240,7 +240,29 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     global parsing_in_progress, current_parser_process
     
-    if not parsing_in_progress:
+    if not parsing_in_progress and current_parser_process is None:
+        # Дополнительная проверка: может быть зависший процесс
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", "python.*main.py"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                pids = result.stdout.strip().split('\n')
+                await update.message.reply_text(
+                    f"⚠️ <b>Обнаружены зависшие процессы парсера</b>\n\n"
+                    f"PID: {', '.join(pids)}\n\n"
+                    f"Нажмите /stop еще раз для принудительного завершения.",
+                    parse_mode='HTML'
+                )
+                # Устанавливаем флаг для следующего вызова
+                parsing_in_progress = True
+                return
+        except Exception as e:
+            logger.error(f"Ошибка при проверке процессов: {e}")
+        
         await update.message.reply_text(
             "ℹ️ <b>Парсер не запущен</b>\n\n"
             "Нечего останавливать. Используйте /status для проверки состояния.",
@@ -248,14 +270,32 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # Если current_parser_process None, но parsing_in_progress = True
+    # (это значит был вызван /stop после обнаружения зависшего процесса)
     if current_parser_process is None:
-        await update.message.reply_text(
-            "⚠️ <b>Не удалось найти процесс парсера</b>\n\n"
-            "Возможно, он был запущен извне бота.",
-            parse_mode='HTML'
-        )
-        parsing_in_progress = False
-        return
+        try:
+            result = subprocess.run(
+                ["pkill", "-9", "-f", "python.*main.py"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            parsing_in_progress = False
+            
+            await update.message.reply_text(
+                "✅ <b>Зависшие процессы парсера убиты</b>\n\n"
+                "Использована команда: pkill -9 -f 'python.*main.py'",
+                parse_mode='HTML'
+            )
+            logger.info("✅ Зависшие процессы парсера убиты через pkill")
+            return
+        except Exception as e:
+            logger.error(f"Ошибка при убийстве процессов: {e}")
+            await update.message.reply_text(
+                f"❌ <b>Ошибка при остановке процессов</b>\n\n{str(e)}",
+                parse_mode='HTML'
+            )
+            return
     
     try:
         logger.info(f"Остановка парсера запрошена пользователем {update.effective_user.id}")
