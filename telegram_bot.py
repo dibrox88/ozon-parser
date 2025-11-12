@@ -805,6 +805,7 @@ async def post_init(application: Application):
     commands = [
         BotCommand("start", "🏠 Главное меню"),
         BotCommand("parse", "🚀 Запустить парсинг"),
+        BotCommand("parse_range", "📊 Парсить диапазон"),
         BotCommand("stop", "⏹️ Остановить парсинг"),
         BotCommand("test_antidetect", "🧪 Тест антидетекта"),
         BotCommand("cron_on", "⏰ Включить автозапуск"),
