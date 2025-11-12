@@ -319,7 +319,7 @@ class SheetsSynchronizer:
     def update_order(self, order: Dict, sheets_data: Dict) -> bool:
         """
         Обновить существующий заказ в Google Sheets.
-        Удаляет старые строки и вставляет новые на их место.
+        КРИТИЧНО: Сохраняет данные в колонке I при обновлении.
         
         Args:
             order: Данные заказа из JSON
@@ -345,34 +345,77 @@ class SheetsSynchronizer:
             # Подготавливаем новые данные
             new_rows = self.prepare_rows_from_order(order)
             new_rows = self.group_and_sort_rows(new_rows)
-            new_rows = self.add_sum_formulas(new_rows, start_row)
             new_row_count = len(new_rows)
             
             logger.info(f"   Старых строк: {old_row_count}, новых строк: {new_row_count}")
             
-            # Если количество строк изменилось
+            # КРИТИЧНО: Сохраняем данные из колонки I ПЕРЕД любыми изменениями
+            column_i_data = []
+            if old_row_count > 0:
+                try:
+                    # Читаем колонку I для старого диапазона
+                    i_range = f"I{start_row}:I{start_row + old_row_count - 1}"
+                    column_i_values = self.worksheet.get(i_range)
+                    # Преобразуем в плоский список, сохраняя пустые ячейки
+                    column_i_data = [row[0] if row else "" for row in column_i_values]
+                    logger.info(f"   💾 Сохранено {len(column_i_data)} значений из колонки I")
+                except Exception as e:
+                    logger.warning(f"   ⚠️ Не удалось прочитать колонку I: {e}")
+                    column_i_data = [""] * old_row_count
+            
+            # Корректируем количество строк
             if new_row_count > old_row_count:
-                # Нужно добавить строки
+                # Нужно добавить строки В КОНЕЦ диапазона
                 rows_to_add = new_row_count - old_row_count
-                logger.info(f"   ➕ Добавление {rows_to_add} строк")
+                logger.info(f"   ➕ Добавление {rows_to_add} строк в конец диапазона")
+                insert_position = start_row + old_row_count
                 for _ in range(rows_to_add):
-                    self.worksheet.insert_row([], index=start_row)
+                    self.worksheet.insert_row([], index=insert_position)
+                # Дополняем column_i_data пустыми значениями
+                column_i_data.extend([""] * rows_to_add)
                 
             elif new_row_count < old_row_count:
-                # Нужно удалить строки
+                # Нужно удалить строки с конца
                 rows_to_delete = old_row_count - new_row_count
-                logger.info(f"   ➖ Удаление {rows_to_delete} строк")
-                # Удаляем с конца диапазона
+                logger.info(f"   ➖ Удаление {rows_to_delete} строк с конца")
                 delete_start = start_row + new_row_count
                 for _ in range(rows_to_delete):
                     self.worksheet.delete_rows(delete_start)
+                # Обрезаем column_i_data
+                column_i_data = column_i_data[:new_row_count]
             
-            # Записываем новые данные
-            start_cell = f"A{start_row}"
-            self.worksheet.update(range_name=start_cell, values=new_rows, value_input_option='USER_ENTERED')  # type: ignore[arg-type]
-            logger.info(f"   ✅ Записано {new_row_count} строк")
+            # Добавляем формулы SUM с учетом финального количества строк
+            new_rows = self.add_sum_formulas(new_rows, start_row)
             
-            # Применяем границы
+            # Восстанавливаем данные из колонки I в новые строки
+            for i, row in enumerate(new_rows):
+                if i < len(column_i_data):
+                    # Если в строке есть 9-й элемент (колонка I), заменяем его
+                    if len(row) > 8:
+                        row[8] = column_i_data[i]
+                    # Если строка короче, дополняем до колонки I
+                    else:
+                        while len(row) < 8:
+                            row.append("")
+                        row.append(column_i_data[i])
+            
+            # Записываем новые данные (только A-H, НЕ трогаем I)
+            # Разбиваем данные: отдельно A-H и отдельно I
+            rows_without_i = [row[:8] for row in new_rows]  # Только A-H
+            
+            # Обновляем A-H
+            range_a_h = f"A{start_row}:H{start_row + new_row_count - 1}"
+            self.worksheet.update(range_name=range_a_h, values=rows_without_i, value_input_option='USER_ENTERED')  # type: ignore[arg-type]
+            logger.info(f"   ✅ Записано {new_row_count} строк (A-H)")
+            
+            # Восстанавливаем колонку I
+            if column_i_data:
+                i_values = [[val] for val in column_i_data]  # Преобразуем в формат для update
+                i_range = f"I{start_row}:I{start_row + new_row_count - 1}"
+                self.worksheet.update(range_name=i_range, values=i_values, value_input_option='USER_ENTERED')  # type: ignore[arg-type]
+                logger.info(f"   ✅ Восстановлена колонка I ({len(column_i_data)} значений)")
+            
+            # Применяем границы ПОСЛЕ всех манипуляций со строками
             self.add_group_borders(start_row, new_row_count, new_rows)
             
             logger.info(f"✅ Заказ {order_number} успешно обновлён")
