@@ -524,8 +524,21 @@ def main():
             finally:
                 # Закрываем браузер
                 logger.info("Закрытие браузера...")
-                context.close()
-                browser.close()
+                try:
+                    context.close()
+                except Exception as e:
+                    logger.warning(f"Ошибка при закрытии context: {e}")
+                try:
+                    browser.close()
+                except Exception as e:
+                    logger.warning(f"Ошибка при закрытии browser: {e}")
+                
+                # Принудительно завершаем все процессы playwright
+                try:
+                    p.stop()
+                    logger.info("✅ Playwright остановлен")
+                except Exception as e:
+                    logger.warning(f"Ошибка при остановке playwright: {e}")
         
             logger.info("Работа завершена успешно")
             sync_send_message("✅ <b>Работа завершена</b>")
