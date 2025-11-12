@@ -350,18 +350,28 @@ class SheetsSynchronizer:
             logger.info(f"   Старых строк: {old_row_count}, новых строк: {new_row_count}")
             
             # КРИТИЧНО: Сохраняем данные из колонки I ПЕРЕД любыми изменениями
-            column_i_data = []
+            # Сохраняем по ключу (mapped_name, status) для точного сопоставления
+            column_i_mapping = {}
             if old_row_count > 0:
                 try:
-                    # Читаем колонку I для старого диапазона
-                    i_range = f"I{start_row}:I{start_row + old_row_count - 1}"
-                    column_i_values = self.worksheet.get(i_range)
-                    # Преобразуем в плоский список, сохраняя пустые ячейки
-                    column_i_data = [row[0] if row else "" for row in column_i_values]
-                    logger.info(f"   💾 Сохранено {len(column_i_data)} значений из колонки I")
+                    # Читаем все данные старого диапазона (A-I)
+                    old_range = f"A{start_row}:I{start_row + old_row_count - 1}"
+                    old_data = self.worksheet.get(old_range)
+                    
+                    for row in old_data:
+                        if len(row) > 8 and row[8]:  # Если есть значение в колонке I
+                            mapped_name = row[6] if len(row) > 6 else ''  # G: mapped_name
+                            status = row[3] if len(row) > 3 else ''       # D: status
+                            key = f"{mapped_name}|{status}"
+                            
+                            # Сохраняем значение I для каждого уникального товара
+                            if key not in column_i_mapping:
+                                column_i_mapping[key] = []
+                            column_i_mapping[key].append(row[8])
+                    
+                    logger.info(f"   💾 Сохранено {len(column_i_mapping)} уникальных значений из колонки I")
                 except Exception as e:
                     logger.warning(f"   ⚠️ Не удалось прочитать колонку I: {e}")
-                    column_i_data = [""] * old_row_count
             
             # Корректируем количество строк
             if new_row_count > old_row_count:
@@ -371,8 +381,6 @@ class SheetsSynchronizer:
                 insert_position = start_row + old_row_count
                 for _ in range(rows_to_add):
                     self.worksheet.insert_row([], index=insert_position)
-                # Дополняем column_i_data пустыми значениями
-                column_i_data.extend([""] * rows_to_add)
                 
             elif new_row_count < old_row_count:
                 # Нужно удалить строки с конца
@@ -381,23 +389,36 @@ class SheetsSynchronizer:
                 delete_start = start_row + new_row_count
                 for _ in range(rows_to_delete):
                     self.worksheet.delete_rows(delete_start)
-                # Обрезаем column_i_data
-                column_i_data = column_i_data[:new_row_count]
             
             # Добавляем формулы SUM с учетом финального количества строк
             new_rows = self.add_sum_formulas(new_rows, start_row)
             
-            # Восстанавливаем данные из колонки I в новые строки
-            for i, row in enumerate(new_rows):
-                if i < len(column_i_data):
-                    # Если в строке есть 9-й элемент (колонка I), заменяем его
-                    if len(row) > 8:
-                        row[8] = column_i_data[i]
-                    # Если строка короче, дополняем до колонки I
-                    else:
-                        while len(row) < 8:
-                            row.append("")
-                        row.append(column_i_data[i])
+            # Восстанавливаем данные из колонки I в новые строки ПО НАЗВАНИЮ ТОВАРА
+            # Используем счетчик для каждого ключа, чтобы брать правильное значение
+            key_counters = {}
+            
+            for row in new_rows:
+                mapped_name = row[6] if len(row) > 6 else ''  # G: mapped_name
+                status = row[3] if len(row) > 3 else ''       # D: status
+                key = f"{mapped_name}|{status}"
+                
+                # Получаем индекс для этого ключа
+                if key not in key_counters:
+                    key_counters[key] = 0
+                
+                # Восстанавливаем значение I, если оно есть в маппинге
+                i_value = ""
+                if key in column_i_mapping and key_counters[key] < len(column_i_mapping[key]):
+                    i_value = column_i_mapping[key][key_counters[key]]
+                    key_counters[key] += 1
+                
+                # Добавляем значение I в строку
+                if len(row) > 8:
+                    row[8] = i_value
+                else:
+                    while len(row) < 8:
+                        row.append("")
+                    row.append(i_value)
             
             # Записываем новые данные (только A-H, НЕ трогаем I)
             # Разбиваем данные: отдельно A-H и отдельно I
@@ -409,11 +430,10 @@ class SheetsSynchronizer:
             logger.info(f"   ✅ Записано {new_row_count} строк (A-H)")
             
             # Восстанавливаем колонку I
-            if column_i_data:
-                i_values = [[val] for val in column_i_data]  # Преобразуем в формат для update
-                i_range = f"I{start_row}:I{start_row + new_row_count - 1}"
-                self.worksheet.update(range_name=i_range, values=i_values, value_input_option='USER_ENTERED')  # type: ignore[arg-type]
-                logger.info(f"   ✅ Восстановлена колонка I ({len(column_i_data)} значений)")
+            i_values = [[row[8] if len(row) > 8 else ""] for row in new_rows]
+            i_range = f"I{start_row}:I{start_row + new_row_count - 1}"
+            self.worksheet.update(range_name=i_range, values=i_values, value_input_option='USER_ENTERED')  # type: ignore[arg-type]
+            logger.info(f"   ✅ Восстановлена колонка I (сопоставлено по названию товара)")
             
             # Применяем границы ПОСЛЕ всех манипуляций со строками
             self.add_group_borders(start_row, new_row_count, new_rows)
@@ -647,10 +667,11 @@ class SheetsSynchronizer:
     def add_group_borders(self, start_row: int, num_rows: int, sorted_rows: List[List]) -> None:
         """
         Добавить границы:
-        1. Верхняя граница 1px для первой строки каждого заказа (A-H)
-        2. Нижняя граница 2px между группами товаров (G-H)
+        1. Верхняя граница 1px для первой строки каждого заказа (A-I)
+        2. Нижняя граница 2px между группами товаров (G-I)
         
-        ВАЖНО: Столбец I (9) НИКОГДА не затрагивается при очистке границ
+        ВАЖНО: Границы очищаются и устанавливаются для всех колонок A-I.
+               Данные в колонке I НЕ трогаются, только форматирование границ.
         
         Args:
             start_row: Номер строки начала данных
@@ -661,8 +682,7 @@ class SheetsSynchronizer:
             if self.worksheet is None or not sorted_rows:
                 return
             
-            # СНАЧАЛА очищаем все границы для ВСЕГО ЗАКАЗА (все строки)
-            # Очищаем только столбцы A-H (0-7), НИКОГДА не трогаем столбец I (8)
+            # СНАЧАЛА очищаем все границы для ВСЕГО ЗАКАЗА (все строки, все колонки A-I)
             # Отправляем ОТДЕЛЬНЫМ запросом для гарантии порядка выполнения
             clear_borders_request = {
                 "updateBorders": {
@@ -671,7 +691,7 @@ class SheetsSynchronizer:
                         "startRowIndex": start_row - 1,  # -1 для 0-индексации
                         "endRowIndex": start_row + num_rows - 1,
                         "startColumnIndex": 0,  # A
-                        "endColumnIndex": 8     # H (не включительно), НЕ трогаем столбец I
+                        "endColumnIndex": 9     # I (не включительно = до конца столбца I)
                     },
                     "top": {"style": "NONE"},
                     "bottom": {"style": "NONE"},
@@ -683,7 +703,7 @@ class SheetsSynchronizer:
             # Отправляем очистку ОТДЕЛЬНО
             if self.spreadsheet:
                 self.spreadsheet.batch_update({"requests": [clear_borders_request]})
-                logger.info(f"🧹 Очищены границы (A-H) для ВСЕГО заказа: строки {start_row}-{start_row + num_rows - 1}")
+                logger.info(f"🧹 Очищены границы (A-I) для ВСЕГО заказа: строки {start_row}-{start_row + num_rows - 1}")
             
             # ТЕПЕРЬ создаем запросы для добавления границ
             requests = []
@@ -700,7 +720,7 @@ class SheetsSynchronizer:
                     order_borders.append(start_row + idx)
                     current_order = order_num
             
-            # Добавляем верхние границы для заказов (A-H, 1px)
+            # Добавляем верхние границы для заказов (A-I, 1px)
             for border_row in order_borders:
                 request = {
                     "updateBorders": {
@@ -709,7 +729,7 @@ class SheetsSynchronizer:
                             "startRowIndex": border_row - 1,  # -1 для 0-индексации
                             "endRowIndex": border_row,
                             "startColumnIndex": 0,  # A
-                            "endColumnIndex": 8     # H (не включительно), НЕ трогаем столбец I
+                            "endColumnIndex": 9     # I (не включительно = до конца столбца I)
                         },
                         "top": {
                             "style": "SOLID",
@@ -720,7 +740,7 @@ class SheetsSynchronizer:
                 }
                 requests.append(request)
             
-            logger.info(f"� Добавлены верхние границы для {len(order_borders)} заказов")
+            logger.info(f"📐 Добавлены верхние границы для {len(order_borders)} заказов")
             
             # 2. Находим границы групп товаров по mapped_name (для нижней линии 2px)
             group_borders = []
@@ -739,7 +759,7 @@ class SheetsSynchronizer:
                 current_name = mapped_name
                 current_order = order_num
             
-            # Добавляем нижние границы между группами товаров (G-H, 2px)
+            # Добавляем нижние границы между группами товаров (G-I, 2px)
             for border_row in group_borders:
                 request = {
                     "updateBorders": {
@@ -748,7 +768,7 @@ class SheetsSynchronizer:
                             "startRowIndex": border_row - 1,  # -1 для 0-индексации
                             "endRowIndex": border_row,
                             "startColumnIndex": 6,  # G
-                            "endColumnIndex": 8      # H (не включительно), НЕ трогаем столбец I
+                            "endColumnIndex": 9      # I (не включительно = до конца столбца I)
                         },
                         "bottom": {
                             "style": "SOLID",
