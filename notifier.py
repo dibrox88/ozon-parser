@@ -116,10 +116,10 @@ class TelegramNotifier:
                 await self.send_message("❌ Время ожидания истекло")
                 return None
             try:
-                # Проверяем новые сообщения
+                # Проверяем новые сообщения с КОРОТКИМ timeout чтобы минимизировать конфликты
                 updates = await self.bot.get_updates(
                     offset=last_update_id + 1,
-                    timeout=10
+                    timeout=3  # Уменьшено с 10 до 3 для меньших конфликтов
                 )
                 
                 for update in updates:
@@ -145,8 +145,13 @@ class TelegramNotifier:
                     last_update_id = update.update_id
                     
             except TelegramError as e:
-                logger.error(f"Ошибка при ожидании ответа: {e}")
-                await asyncio.sleep(1)
+                # Игнорируем конфликты getUpdates - они могут быть из-за основного бота
+                if "Conflict" in str(e) or "terminated by other getUpdates" in str(e):
+                    logger.warning(f"⚠️ Конфликт getUpdates (ожидается при работающем боте), продолжаем...")
+                    await asyncio.sleep(2)  # Увеличенная пауза при конфликте
+                else:
+                    logger.error(f"Ошибка при ожидании ответа: {e}")
+                    await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"Неожиданная ошибка при ожидании ответа: {e}")
                 await asyncio.sleep(1)
