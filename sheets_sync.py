@@ -8,7 +8,8 @@ from google.oauth2.service_account import Credentials
 from loguru import logger
 from typing import List, Dict, Optional, Any, cast
 from config import Config
-from notifier import sync_send_message
+from notifier import sync_send_message, sync_wait_for_input
+import difflib
 
 
 class SheetsSynchronizer:
@@ -407,28 +408,83 @@ class SheetsSynchronizer:
             
             # Счетчик для каждого названия товара
             name_counters = {}
-            
-            # Список ошибок несовпадений для отправки в телеграм
-            mismatch_errors = []
-            
+
+            # Интерактивное сопоставление для новых названий, которых нет в старых данных
+            existing_names = list(i_values_by_name.keys())
+
+            # Функция для попытки интерактивного сопоставления через бота
+            def try_interactive_mapping(target_name: str) -> bool:
+                """Попытаться сопоставить target_name с существующими именами через Telegram.
+                Возвращает True, если сопоставление выполнено, False в противном случае.
+                """
+                if not existing_names:
+                    return False
+
+                # Ищем похожие варианты
+                candidates = difflib.get_close_matches(target_name, existing_names, n=5, cutoff=0.6)
+                if not candidates:
+                    return False
+
+                # Формируем сообщение с вариантами
+                msg = f"⚠️ Найдены похожие названия для '{target_name}':\n\n"
+                for i, c in enumerate(candidates, 1):
+                    msg += f"{i}. {c}\n"
+                msg += "\n0. Пропустить (оставить I пустым)\n\nВыберите номер (0-" + str(len(candidates)) + "):" 
+
+                # Отправляем промпт и ждём ответа
+                try:
+                    response = sync_wait_for_input(msg, timeout=300)
+                except Exception as e:
+                    logger.warning(f"Не удалось запросить сопоставление для '{target_name}': {e}")
+                    return False
+
+                if not response:
+                    logger.info(f"Сопоставление для '{target_name}' не выполнено (нет ответа)")
+                    return False
+
+                # Разбираем ответ
+                try:
+                    choice = int(response.strip())
+                except ValueError:
+                    logger.info(f"Неверный ответ при сопоставлении '{target_name}': {response}")
+                    return False
+
+                if choice == 0:
+                    logger.info(f"Пользователь пропустил сопоставление для '{target_name}'")
+                    return False
+
+                if 1 <= choice <= len(candidates):
+                    chosen = candidates[choice - 1]
+                    # Переносим старые I значения под новое имя
+                    i_values_by_name[target_name] = list(i_values_by_name.get(chosen, []))
+                    logger.info(f"Сопоставлено '{target_name}' -> '{chosen}' и восстановлены {len(i_values_by_name[target_name])} значений I")
+                    return True
+
+                return False
+
             # ЭТАП 1: Заполняем строки где D="TRUE" (получен)
             for row in new_rows:
                 mapped_name = row[6] if len(row) > 6 else ''  # G: mapped_name
                 status = row[3] if len(row) > 3 else ''       # D: status
-                
+
                 if status == "TRUE":
                     # Инициализируем счетчик для этого товара
                     if mapped_name not in name_counters:
                         name_counters[mapped_name] = 0
-                    
+
+                    # Если нет известных значений для этого названия,
+                    # попробуем интерактивно сопоставить их с существующими
+                    if mapped_name and mapped_name not in i_values_by_name:
+                        mapped = try_interactive_mapping(mapped_name)
+                        if not mapped:
+                            logger.warning(f"⚠️ Не найдено соответствий для '{mapped_name}' (D=TRUE), оставляем I пустым")
+
                     # Восстанавливаем значение I по названию товара (G)
                     i_value = ""
                     if mapped_name in i_values_by_name and name_counters[mapped_name] < len(i_values_by_name[mapped_name]):
                         i_value = i_values_by_name[mapped_name][name_counters[mapped_name]]
                         name_counters[mapped_name] += 1
-                    elif mapped_name:  # Если название есть, но совпадений не найдено
-                        mismatch_errors.append(f"G={mapped_name}, D={status}, I=<пусто>")
-                    
+
                     # Добавляем значение I в строку
                     if len(row) > 8:
                         row[8] = i_value
@@ -436,25 +492,30 @@ class SheetsSynchronizer:
                         while len(row) < 8:
                             row.append("")
                         row.append(i_value)
-            
+
             # ЭТАП 2: Заполняем строки где D!="TRUE" (FALSE, в пути, отменен и т.д.)
             for row in new_rows:
                 mapped_name = row[6] if len(row) > 6 else ''  # G: mapped_name
                 status = row[3] if len(row) > 3 else ''       # D: status
-                
+
                 if status != "TRUE":
                     # Инициализируем счетчик для этого товара
                     if mapped_name not in name_counters:
                         name_counters[mapped_name] = 0
-                    
+
+                    # Если нет известных значений для этого названия,
+                    # попробуем интерактивно сопоставить их с существующими
+                    if mapped_name and mapped_name not in i_values_by_name:
+                        mapped = try_interactive_mapping(mapped_name)
+                        if not mapped:
+                            logger.warning(f"⚠️ Не найдено соответствий для '{mapped_name}' (D!=TRUE), оставляем I пустым")
+
                     # Восстанавливаем значение I по названию товара (G)
                     i_value = ""
                     if mapped_name in i_values_by_name and name_counters[mapped_name] < len(i_values_by_name[mapped_name]):
                         i_value = i_values_by_name[mapped_name][name_counters[mapped_name]]
                         name_counters[mapped_name] += 1
-                    elif mapped_name:  # Если название есть, но совпадений не найдено
-                        mismatch_errors.append(f"G={mapped_name}, D={status}, I=<пусто>")
-                    
+
                     # Добавляем значение I в строку
                     if len(row) > 8:
                         row[8] = i_value
@@ -462,16 +523,6 @@ class SheetsSynchronizer:
                         while len(row) < 8:
                             row.append("")
                         row.append(i_value)
-            
-            # Отправляем ошибки несовпадений в телеграм
-            if mismatch_errors:
-                from notifier import sync_send_message
-                error_msg = f"⚠️ <b>Не удалось сопоставить колонку I:</b>\n\n"
-                error_msg += "\n".join(f"• {err}" for err in mismatch_errors[:10])  # Показываем первые 10
-                if len(mismatch_errors) > 10:
-                    error_msg += f"\n\n... и ещё {len(mismatch_errors) - 10} несовпадений"
-                sync_send_message(error_msg)
-                logger.warning(f"⚠️ Не сопоставлено значений I: {len(mismatch_errors)}")
             
             # Записываем новые данные (только A-H, НЕ трогаем I)
             # Разбиваем данные: отдельно A-H и отдельно I
