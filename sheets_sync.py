@@ -393,32 +393,85 @@ class SheetsSynchronizer:
             # Добавляем формулы SUM с учетом финального количества строк
             new_rows = self.add_sum_formulas(new_rows, start_row)
             
-            # Восстанавливаем данные из колонки I в новые строки ПО НАЗВАНИЮ ТОВАРА
-            # Используем счетчик для каждого ключа, чтобы брать правильное значение
-            key_counters = {}
+            # Восстанавливаем данные из колонки I в новые строки
+            # ПОРЯДОК: Сначала D="TRUE", потом D="FALSE" и остальные
+            # Сопоставление ТОЛЬКО по G (mapped_name), НЕ по статусу
             
+            # Группируем старые значения I ТОЛЬКО по G (mapped_name)
+            i_values_by_name = {}
+            for key, values in column_i_mapping.items():
+                mapped_name = key.split('|')[0]  # Берем только название, без статуса
+                if mapped_name not in i_values_by_name:
+                    i_values_by_name[mapped_name] = []
+                i_values_by_name[mapped_name].extend(values)
+            
+            # Счетчик для каждого названия товара
+            name_counters = {}
+            
+            # Список ошибок несовпадений для отправки в телеграм
+            mismatch_errors = []
+            
+            # ЭТАП 1: Заполняем строки где D="TRUE" (получен)
             for row in new_rows:
                 mapped_name = row[6] if len(row) > 6 else ''  # G: mapped_name
                 status = row[3] if len(row) > 3 else ''       # D: status
-                key = f"{mapped_name}|{status}"
                 
-                # Получаем индекс для этого ключа
-                if key not in key_counters:
-                    key_counters[key] = 0
+                if status == "TRUE":
+                    # Инициализируем счетчик для этого товара
+                    if mapped_name not in name_counters:
+                        name_counters[mapped_name] = 0
+                    
+                    # Восстанавливаем значение I по названию товара (G)
+                    i_value = ""
+                    if mapped_name in i_values_by_name and name_counters[mapped_name] < len(i_values_by_name[mapped_name]):
+                        i_value = i_values_by_name[mapped_name][name_counters[mapped_name]]
+                        name_counters[mapped_name] += 1
+                    elif mapped_name:  # Если название есть, но совпадений не найдено
+                        mismatch_errors.append(f"G={mapped_name}, D={status}, I=<пусто>")
+                    
+                    # Добавляем значение I в строку
+                    if len(row) > 8:
+                        row[8] = i_value
+                    else:
+                        while len(row) < 8:
+                            row.append("")
+                        row.append(i_value)
+            
+            # ЭТАП 2: Заполняем строки где D!="TRUE" (FALSE, в пути, отменен и т.д.)
+            for row in new_rows:
+                mapped_name = row[6] if len(row) > 6 else ''  # G: mapped_name
+                status = row[3] if len(row) > 3 else ''       # D: status
                 
-                # Восстанавливаем значение I, если оно есть в маппинге
-                i_value = ""
-                if key in column_i_mapping and key_counters[key] < len(column_i_mapping[key]):
-                    i_value = column_i_mapping[key][key_counters[key]]
-                    key_counters[key] += 1
-                
-                # Добавляем значение I в строку
-                if len(row) > 8:
-                    row[8] = i_value
-                else:
-                    while len(row) < 8:
-                        row.append("")
-                    row.append(i_value)
+                if status != "TRUE":
+                    # Инициализируем счетчик для этого товара
+                    if mapped_name not in name_counters:
+                        name_counters[mapped_name] = 0
+                    
+                    # Восстанавливаем значение I по названию товара (G)
+                    i_value = ""
+                    if mapped_name in i_values_by_name and name_counters[mapped_name] < len(i_values_by_name[mapped_name]):
+                        i_value = i_values_by_name[mapped_name][name_counters[mapped_name]]
+                        name_counters[mapped_name] += 1
+                    elif mapped_name:  # Если название есть, но совпадений не найдено
+                        mismatch_errors.append(f"G={mapped_name}, D={status}, I=<пусто>")
+                    
+                    # Добавляем значение I в строку
+                    if len(row) > 8:
+                        row[8] = i_value
+                    else:
+                        while len(row) < 8:
+                            row.append("")
+                        row.append(i_value)
+            
+            # Отправляем ошибки несовпадений в телеграм
+            if mismatch_errors:
+                from notifier import sync_send_message
+                error_msg = f"⚠️ <b>Не удалось сопоставить колонку I:</b>\n\n"
+                error_msg += "\n".join(f"• {err}" for err in mismatch_errors[:10])  # Показываем первые 10
+                if len(mismatch_errors) > 10:
+                    error_msg += f"\n\n... и ещё {len(mismatch_errors) - 10} несовпадений"
+                sync_send_message(error_msg)
+                logger.warning(f"⚠️ Не сопоставлено значений I: {len(mismatch_errors)}")
             
             # Записываем новые данные (только A-H, НЕ трогаем I)
             # Разбиваем данные: отдельно A-H и отдельно I
@@ -670,7 +723,7 @@ class SheetsSynchronizer:
     
     def _clear_borders_for_range(self, start_row: int, num_rows: int) -> None:
         """
-        Очистить ВСЕ границы (внешние + внутренние) для указанного диапазона строк (A-I).
+        Очистить ВСЕ границы (внешние + внутренние) для указанного диапазона строк по ВСЕМ столбцам.
         
         Args:
             start_row: Номер строки начала диапазона
@@ -685,9 +738,8 @@ class SheetsSynchronizer:
                     "range": {
                         "sheetId": self.worksheet.id,
                         "startRowIndex": start_row - 1,  # -1 для 0-индексации
-                        "endRowIndex": start_row + num_rows - 1,
-                        "startColumnIndex": 0,  # A
-                        "endColumnIndex": 9     # I (не включительно = до конца столбца I)
+                        "endRowIndex": start_row + num_rows - 1
+                        # НЕ указываем startColumnIndex и endColumnIndex = очистка по ВСЕМ столбцам
                     },
                     # Очистка ВСЕХ границ: внешних и внутренних
                     "top": {"style": "NONE"},
@@ -702,7 +754,7 @@ class SheetsSynchronizer:
             # Отправляем очистку ОТДЕЛЬНЫМ запросом
             if self.spreadsheet:
                 self.spreadsheet.batch_update({"requests": [clear_borders_request]})
-                logger.info(f"🧹 Очищены границы (A-I) для диапазона: строки {start_row}-{start_row + num_rows - 1}")
+                logger.info(f"🧹 Очищены границы (ВСЕ столбцы) для диапазона: строки {start_row}-{start_row + num_rows - 1}")
         
         except Exception as e:
             logger.warning(f"⚠️ Не удалось очистить границы: {e}")
@@ -739,16 +791,15 @@ class SheetsSynchronizer:
                     order_borders.append(start_row + idx)
                     current_order = order_num
             
-            # Добавляем верхние границы для заказов (A-I, 1px)
+            # Добавляем верхние границы для заказов (ВСЯ СТРОКА, 1px)
             for border_row in order_borders:
                 request = {
                     "updateBorders": {
                         "range": {
                             "sheetId": self.worksheet.id,
                             "startRowIndex": border_row - 1,  # -1 для 0-индексации
-                            "endRowIndex": border_row,
-                            "startColumnIndex": 0,  # A
-                            "endColumnIndex": 9     # I (не включительно = до конца столбца I)
+                            "endRowIndex": border_row
+                            # НЕ указываем startColumnIndex и endColumnIndex = граница на ВСЮ строку
                         },
                         "top": {
                             "style": "SOLID",
