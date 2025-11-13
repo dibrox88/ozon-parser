@@ -670,7 +670,7 @@ class SheetsSynchronizer:
     
     def _clear_borders_for_range(self, start_row: int, num_rows: int) -> None:
         """
-        Очистить все границы для указанного диапазона строк (A-I).
+        Очистить ВСЕ границы (внешние + внутренние) для указанного диапазона строк (A-I).
         
         Args:
             start_row: Номер строки начала диапазона
@@ -689,10 +689,13 @@ class SheetsSynchronizer:
                         "startColumnIndex": 0,  # A
                         "endColumnIndex": 9     # I (не включительно = до конца столбца I)
                     },
+                    # Очистка ВСЕХ границ: внешних и внутренних
                     "top": {"style": "NONE"},
                     "bottom": {"style": "NONE"},
                     "left": {"style": "NONE"},
-                    "right": {"style": "NONE"}
+                    "right": {"style": "NONE"},
+                    "innerHorizontal": {"style": "NONE"},  # Горизонтальные границы между строками
+                    "innerVertical": {"style": "NONE"}      # Вертикальные границы между столбцами
                 }
             }
             
