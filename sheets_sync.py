@@ -390,10 +390,6 @@ class SheetsSynchronizer:
                 for _ in range(rows_to_delete):
                     self.worksheet.delete_rows(delete_start)
             
-            # КРИТИЧНО: Очищаем границы ПОСЛЕ вставки/удаления строк
-            # Иначе новые строки будут иметь старые границы
-            self._clear_borders_for_range(start_row, new_row_count)
-            
             # Добавляем формулы SUM с учетом финального количества строк
             new_rows = self.add_sum_formulas(new_rows, start_row)
             
@@ -438,6 +434,10 @@ class SheetsSynchronizer:
             i_range = f"I{start_row}:I{start_row + new_row_count - 1}"
             self.worksheet.update(range_name=i_range, values=i_values, value_input_option='USER_ENTERED')  # type: ignore[arg-type]
             logger.info(f"   ✅ Восстановлена колонка I (сопоставлено по названию товара)")
+            
+            # КРИТИЧНО: Очищаем границы ПОСЛЕ записи данных, но ПЕРЕД добавлением новых границ
+            # Иначе новые вставленные строки будут иметь старые границы
+            self._clear_borders_for_range(start_row, new_row_count)
             
             # Применяем границы ПОСЛЕ всех манипуляций со строками
             self.add_group_borders(start_row, new_row_count, new_rows)
