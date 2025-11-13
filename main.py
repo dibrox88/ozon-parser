@@ -512,24 +512,39 @@ def main():
                                 logger.info("🔄 Запуск синхронизации с Google Sheets...")
                                 from sheets_sync import sync_to_sheets
                                 
-                                if sync_to_sheets(json_file):
+                                logger.info("DEBUG: Вызов sync_to_sheets()...")
+                                result = sync_to_sheets(json_file)
+                                logger.info(f"DEBUG: sync_to_sheets() вернул: {result}")
+                                
+                                if result:
                                     logger.info("✅ Синхронизация с Google Sheets завершена")
                                 else:
                                     logger.warning("⚠️ Синхронизация не удалась")
+                                
+                                logger.info("DEBUG: Выход из блока try синхронизации")
                                     
                             except Exception as e:
                                 logger.error(f"❌ Ошибка синхронизации с Google Sheets: {e}")
                                 sync_send_message(f"⚠️ Ошибка синхронизации: {e}")
                             
+                            logger.info("DEBUG: После блока try-except синхронизации")
+                            
                         except Exception as e:
                             logger.error(f"❌ Ошибка при экспорте данных: {e}")
                             sync_send_message(f"⚠️ Ошибка при экспорте данных: {e}")
+                        
+                        logger.info("DEBUG: После блока try-except экспорта данных")
+                        logger.info("DEBUG: После блока try-except экспорта данных")
             
             except Exception as parse_error:
                 # Обработка ошибок парсинга
                 logger.error(f"❌ Ошибка при парсинге: {parse_error}")
                 sync_send_message(f"❌ <b>Ошибка парсинга</b>\n\n{str(parse_error)}")
                 # Продолжаем выполнение для cleanup
+            
+            logger.info("DEBUG: После блока try-except парсинга")
+        
+        logger.info("DEBUG: Выход из with sync_playwright()")
         
         # Работа полностью завершена - немедленно выходим
         # КРИТИЧНО: НЕ закрываем браузер/playwright явно - это вызывает зависание
