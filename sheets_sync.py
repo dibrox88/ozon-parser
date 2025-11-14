@@ -4,6 +4,7 @@ MVP версия: базовая запись новых заказов.
 """
 
 import gspread
+import json
 from google.oauth2.service_account import Credentials
 from loguru import logger
 from typing import List, Dict, Optional, Any, cast
@@ -677,6 +678,16 @@ class SheetsSynchronizer:
             split_index = item.get('split_index', '')
             split_total = item.get('split_total', '')
             
+            # Формируем JSON для столбца Q с информацией о разбивке
+            split_info = ""
+            if is_split and split_index and split_total:
+                split_data = {
+                    'is_split': True,
+                    'split_index': split_index,
+                    'split_total': split_total
+                }
+                split_info = json.dumps(split_data, ensure_ascii=False)
+            
             # Создаём quantity дубликатов строк
             for _ in range(quantity):
                 row = [
@@ -689,9 +700,10 @@ class SheetsSynchronizer:
                     mapped_name,                               # G: mapped_name
                     mapped_type,                               # H: mapped_type
                     "",                                        # I: пустой (резерв)
-                    str(is_split) if is_split else "",        # J: is_split
-                    str(split_index) if split_index else "",  # K: split_index
-                    str(split_total) if split_total else ""   # L: split_total
+                    "", "", "", "", "",                        # J-N: пустые столбцы
+                    "",                                        # O: пустой
+                    "",                                        # P: пустой
+                    split_info                                 # Q: split info (JSON)
                 ]
                 rows.append(row)
         
@@ -813,8 +825,9 @@ class SheetsSynchronizer:
     def add_group_borders(self, start_row: int, num_rows: int, sorted_rows: List[List]) -> None:
         """
         Добавить границы:
-        1. Верхняя граница 1px для первой строки каждого заказа (A-I)
-        2. Нижняя граница 1px между группами товаров (G-I)
+        1. Верхняя граница 1px для первой строки каждого заказа (A-I, вся строка)
+        2. Нижняя граница 1px на последнюю строку каждого заказа (A-I, вся строка)
+        3. Нижняя граница 1px между группами товаров внутри заказа (G-I)
         
         ВАЖНО: Границы должны быть очищены ДО вызова этого метода через _clear_borders_for_range()
         
@@ -863,6 +876,47 @@ class SheetsSynchronizer:
             
             logger.info(f"📐 Добавлены верхние границы для {len(order_borders)} заказов")
             
+            # 1б. Находим последние строки каждого заказа (для нижней линии 1px на всю строку)
+            order_last_rows = []
+            current_order = None
+            last_row_idx = None
+            
+            for idx, row in enumerate(sorted_rows):
+                order_num = row[1] if len(row) > 1 else ''  # B: order_number
+                
+                if order_num != current_order:
+                    # Если был предыдущий заказ, сохраняем его последнюю строку
+                    if current_order is not None and last_row_idx is not None:
+                        order_last_rows.append(last_row_idx)
+                    current_order = order_num
+                
+                last_row_idx = start_row + idx
+            
+            # Добавляем последнюю строку самого последнего заказа
+            if last_row_idx is not None:
+                order_last_rows.append(last_row_idx)
+            
+            # Добавляем нижние границы для последних строк заказов (ВСЯ СТРОКА, 1px)
+            for border_row in order_last_rows:
+                request = {
+                    "updateBorders": {
+                        "range": {
+                            "sheetId": self.worksheet.id,
+                            "startRowIndex": border_row - 1,  # -1 для 0-индексации
+                            "endRowIndex": border_row
+                            # НЕ указываем startColumnIndex и endColumnIndex = граница на ВСЮ строку
+                        },
+                        "bottom": {
+                            "style": "SOLID",
+                            "width": 1,
+                            "color": {"red": 0, "green": 0, "blue": 0}
+                        }
+                    }
+                }
+                requests.append(request)
+            
+            logger.info(f"📐 Добавлены нижние границы для {len(order_last_rows)} заказов (последние строки)")
+            
             # 2. Находим границы групп товаров по mapped_name (для нижней линии 1px)
             group_borders = []
             current_name = None
@@ -905,7 +959,7 @@ class SheetsSynchronizer:
             # Отправляем batch запрос
             if requests and self.spreadsheet:
                 self.spreadsheet.batch_update({"requests": requests})
-                logger.info(f"✅ Применены границы: {len(order_borders)} заказов + {len(group_borders)} групп товаров")
+                logger.info(f"✅ Применены границы: {len(order_borders)} заказов (верх) + {len(order_last_rows)} заказов (низ) + {len(group_borders)} групп товаров")
             
         except Exception as e:
             logger.warning(f"⚠️ Не удалось добавить границы: {e}")
