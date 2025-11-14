@@ -140,12 +140,16 @@ class OzonAuth:
             
             # ДИАГНОСТИКА: Проверяем что загрузилось
             current_url = self.page.url
-            page_title = self.page.title()
-            page_content = self.page.content()[:500]  # Первые 500 символов
+            
+            # Получаем title только после полной загрузки
+            try:
+                page_title = self.page.title()
+            except Exception as e:
+                logger.warning(f"Не удалось получить title страницы: {e}")
+                page_title = "Unknown"
             
             logger.info(f"📍 Текущий URL: {current_url}")
             logger.info(f"📄 Заголовок страницы: {page_title}")
-            #logger.info(f"📝 Начало HTML: {page_content}")
             
             # Проверяем на признаки блокировки
             if "доступ" in page_title.lower():
