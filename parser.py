@@ -388,21 +388,41 @@ class OzonParser:
                         item_status = fallback_status
                     
                     # Парсим товары внутри products_block
-                    # Ищем все div с названием товара (span.tsCompact500Medium)
-                    product_divs = products_block.query_selector_all('div')
+                    # Ищем все блоки с названием товара (span.tsCompact500Medium)
+                    name_elements = products_block.query_selector_all('span.tsCompact500Medium')
                     
-                    for product_div in product_divs:
-                        # Проверяем наличие названия товара
-                        name_element = product_div.query_selector('span.tsCompact500Medium')
-                        if not name_element:
-                            continue
-                        
+                    for name_element in name_elements:
                         try:
                             name = name_element.inner_text().strip()
                             
-                            # Извлекаем цвет
+                            # Находим родительский div, который содержит всю информацию о товаре
+                            # Это div, который содержит и название (tsCompact500Medium), и цвет (tsCompact400Small), и цену
+                            parent = name_element
+                            product_container = None
+                            
+                            # Поднимаемся вверх по DOM до тех пор, пока не найдем контейнер с ценой
+                            for _ in range(10):  # Максимум 10 уровней вверх
+                                parent = parent.evaluate_handle('el => el.parentElement')
+                                if not parent:
+                                    break
+                                
+                                # Проверяем наличие цены в этом контейнере
+                                has_price = parent.evaluate('''
+                                    el => el.querySelector('span.tsHeadline400Small') !== null || 
+                                          el.querySelector('span.tsBodyControl300XSmall') !== null
+                                ''')
+                                
+                                if has_price:
+                                    product_container = parent.as_element()
+                                    break
+                            
+                            if not product_container:
+                                logger.debug(f"Не найден контейнер для товара: {name}")
+                                continue
+                            
+                            # Извлекаем цвет из того же контейнера
                             color = ""
-                            color_element = product_div.query_selector('span.tsCompact400Small')
+                            color_element = product_container.query_selector('span.tsCompact400Small')
                             if color_element:
                                 color_text = color_element.inner_text().strip()
                                 if 'Цвет:' in color_text:
@@ -414,7 +434,7 @@ class OzonParser:
                             price = None
                             
                             # Ищем span.tsBodyControl300XSmall с форматом "X x ЦЕНА ₽"
-                            price_spans = product_div.query_selector_all('span.tsBodyControl300XSmall')
+                            price_spans = product_container.query_selector_all('span.tsBodyControl300XSmall')
                             
                             for span in price_spans:
                                 text = span.inner_text().strip()
@@ -428,7 +448,7 @@ class OzonParser:
                             
                             # Если не нашли, ищем в span.tsHeadline400Small (количество = 1)
                             if price is None:
-                                headline_span = product_div.query_selector('span.tsHeadline400Small')
+                                headline_span = product_container.query_selector('span.tsHeadline400Small')
                                 if headline_span:
                                     text = headline_span.inner_text().strip()
                                     match_single = re.search(r'([\d\s\u202f\xa0]+)\s*₽', text)
