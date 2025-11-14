@@ -80,7 +80,7 @@ class ProductMatcher:
             lines.append(f"  <b>{num}</b> - {type_name}")
         return "\n".join(lines)
     
-    def _load_mappings(self) -> Dict[str, Dict[str, str]]:
+    def _load_mappings(self) -> Dict[str, Dict[str, str | int]]:
         """Загрузить сохранённые сопоставления из файла."""
         try:
             if Path(self.mappings_file).exists():
@@ -94,11 +94,32 @@ class ProductMatcher:
         return {}
     
     def _save_mappings(self) -> bool:
-        """Сохранить сопоставления в файл."""
+        """
+        Сохранить сопоставления в файл с объединением существующих данных.
+        Перечитывает файл перед сохранением, чтобы не потерять маппинги,
+        добавленные другими процессами или на сервере.
+        """
         try:
+            # Перечитываем файл для получения актуальных данных
+            existing_mappings = {}
+            if Path(self.mappings_file).exists():
+                try:
+                    with open(self.mappings_file, 'r', encoding='utf-8') as f:
+                        existing_mappings = json.load(f)
+                except Exception as e:
+                    logger.warning(f"⚠️ Не удалось загрузить существующие маппинги: {e}")
+            
+            # Объединяем: приоритет у НОВЫХ маппингов (self.mappings)
+            merged_mappings = {**existing_mappings, **self.mappings}
+            
+            # Сохраняем объединённый результат
             with open(self.mappings_file, 'w', encoding='utf-8') as f:
-                json.dump(self.mappings, f, ensure_ascii=False, indent=2)
-            logger.info(f"✅ Сопоставления сохранены в {self.mappings_file}")
+                json.dump(merged_mappings, f, ensure_ascii=False, indent=2)
+            
+            # Обновляем локальный кеш
+            self.mappings = merged_mappings
+            
+            logger.info(f"✅ Сопоставления сохранены в {self.mappings_file} (всего записей: {len(merged_mappings)})")
             return True
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения сопоставлений: {e}")
@@ -123,7 +144,7 @@ class ProductMatcher:
             return f"{normalized_name}|{normalized_color}"
         return normalized_name
     
-    def get_mapping(self, name: str, color: str = "") -> Optional[Dict[str, str]]:
+    def get_mapping(self, name: str, color: str = "") -> Optional[Dict[str, str | int]]:
         """
         Получить сохранённое сопоставление.
         
@@ -132,12 +153,12 @@ class ProductMatcher:
             color: Цвет товара
             
         Returns:
-            Словарь с mapped_name и mapped_type или None
+            Словарь с mapped_name, mapped_type и опционально split_units или None
         """
         key = self._create_mapping_key(name, color)
         return self.mappings.get(key)
     
-    def save_mapping(self, name: str, color: str, mapped_name: str, mapped_type: str) -> bool:
+    def save_mapping(self, name: str, color: str, mapped_name: str, mapped_type: str, split_units: Optional[int] = None) -> bool:
         """
         Сохранить новое сопоставление.
         
@@ -146,17 +167,24 @@ class ProductMatcher:
             color: Цвет товара
             mapped_name: Сопоставленное название
             mapped_type: Тип товара
+            split_units: Количество единиц для разбивки (если товар разбивается)
             
         Returns:
             True если успешно сохранено
         """
         key = self._create_mapping_key(name, color)
-        self.mappings[key] = {
+        mapping_data: Dict[str, str | int] = {
             'mapped_name': mapped_name,
             'mapped_type': mapped_type,
             'original_name': name,
             'color': color
         }
+        
+        # Добавляем информацию о разбивке, если она есть
+        if split_units and split_units > 1:
+            mapping_data['split_units'] = split_units
+            
+        self.mappings[key] = mapping_data
         return self._save_mappings()
     
     def find_matches(self, name: str, color: str = "") -> list:
@@ -255,8 +283,9 @@ def clarify_color_if_needed(color: str, item_name: str) -> str:
 def split_product_into_units(
     item: Dict,
     matcher: ProductMatcher,
-    order_number: Optional[str] = None
-) -> Optional[List[Dict]]:
+    order_number: Optional[str] = None,
+    predefined_units: Optional[int] = None
+) -> Optional[tuple[List[Dict], int]]:
     """
     Разбить товар на несколько одинаковых единиц.
     
@@ -264,9 +293,10 @@ def split_product_into_units(
         item: Словарь с данными товара
         matcher: Объект ProductMatcher
         order_number: Номер заказа
+        predefined_units: Предопределённое количество единиц (из сохранённого маппинга)
         
     Returns:
-        Список одинаковых товаров или None при отмене
+        Кортеж (список одинаковых товаров, количество единиц) или None при отмене
     """
     name = item.get('name', '')
     price = item.get('price', 0)
@@ -275,7 +305,13 @@ def split_product_into_units(
     
     logger.info(f"🔧 Разбивка товара на несколько штук: {name[:50]}...")
     
-    message = f"""
+    # Если есть сохранённое значение split_units, используем его
+    if predefined_units:
+        logger.info(f"✅ Используем сохранённое значение split_units: {predefined_units}")
+        num_units = predefined_units
+    else:
+        # Запрашиваем количество у пользователя
+        message = f"""
 📦 <b>РАЗБИВКА ТОВАРА НА НЕСКОЛЬКО ШТУК</b>
 
 <b>Товар:</b> {name}
@@ -289,28 +325,28 @@ def split_product_into_units(
 В Google Таблицу будет добавлено несколько строк с одинаковым товаром.
 
 ⏳ Введите число штук (например: 2, 3, 5) или 0 для отмены..."""
-    
-    sync_send_message(message)
-    
-    from notifier import sync_wait_for_input
-    units_input = sync_wait_for_input("Введите количество штук или 0:", timeout=0)  # Без таймаута
-    
-    if not units_input or units_input.strip() == '0':
-        sync_send_message("❌ Разбивка отменена")
-        return None
-    
-    # Парсим количество
-    try:
-        num_units = int(units_input.strip())
-        if num_units < 2:
-            sync_send_message("❌ Количество должно быть минимум 2")
+        
+        sync_send_message(message)
+        
+        from notifier import sync_wait_for_input
+        units_input = sync_wait_for_input("Введите количество штук или 0:", timeout=0)  # Без таймаута
+        
+        if not units_input or units_input.strip() == '0':
+            sync_send_message("❌ Разбивка отменена")
             return None
-        if num_units > 20:
-            sync_send_message("❌ Слишком большое количество (максимум 20)")
+        
+        # Парсим количество
+        try:
+            num_units = int(units_input.strip())
+            if num_units < 2:
+                sync_send_message("❌ Количество должно быть минимум 2")
+                return None
+            if num_units > 20:
+                sync_send_message("❌ Слишком большое количество (максимум 20)")
+                return None
+        except ValueError:
+            sync_send_message(f"❌ Некорректное число: {units_input}")
             return None
-    except ValueError:
-        sync_send_message(f"❌ Некорректное число: {units_input}")
-        return None
     
     # Вычисляем цену за единицу
     unit_price = round(price / num_units, 2)
@@ -327,7 +363,7 @@ def split_product_into_units(
         split_item = {
             'name': name,
             'color': color,
-            'quantity': 1,  # Каждая единица имеет количество 1
+            'quantity': quantity,  # Сохраняем оригинальное количество для каждой единицы
             'price': current_price,
             'order_number': order_number,
             'original_price': price,  # Сохраняем оригинальную цену
@@ -363,7 +399,7 @@ def split_product_into_units(
     
     logger.info(f"✅ Товар разбит на {num_units} единиц: {name} ({price}₽ → {num_units}x{unit_price}₽)")
     
-    return split_items
+    return split_items, num_units
 
 
 def match_product_interactive(
@@ -397,7 +433,22 @@ def match_product_interactive(
     saved_mapping = matcher.get_mapping(name, color)
     if saved_mapping:
         logger.info(f"✅ Найдено сохранённое сопоставление: {name} → {saved_mapping['mapped_name']} ({saved_mapping['mapped_type']})")
-        return saved_mapping['mapped_name'], saved_mapping['mapped_type']
+        
+        # Проверяем, есть ли сохраненная информация о разбивке
+        if 'split_units' in saved_mapping:
+            try:
+                split_units_value = int(saved_mapping['split_units'])
+                if split_units_value > 1:
+                    logger.info(f"🔧 Применяем сохраненную разбивку: {split_units_value} единиц")
+                    # Возвращаем специальный маркер для разбивки
+                    return "SPLIT", None
+            except (ValueError, TypeError):
+                logger.warning(f"⚠️ Некорректное значение split_units в маппинге: {saved_mapping['split_units']}")
+        
+        # Возвращаем сохраненные значения (гарантированно строки)
+        mapped_name = str(saved_mapping['mapped_name'])
+        mapped_type = str(saved_mapping['mapped_type'])
+        return mapped_name, mapped_type
     
     # Ищем похожие товары в каталоге
     matches = matcher.find_matches(name, color)
@@ -894,6 +945,39 @@ def enrich_orders_with_mapping(
         order_numbers = item_to_orders.get(key, [])
         first_order = order_numbers[0] if order_numbers else None
         
+        # 🔧 АВТОМАТИЧЕСКАЯ РАЗБИВКА: проверяем сохранённый маппинг на split_units
+        saved_mapping = matcher.get_mapping(item['name'], item.get('color', ''))
+        split_units_raw = saved_mapping.get('split_units', 0) if saved_mapping else 0
+        if saved_mapping and split_units_raw:
+            try:
+                split_units = int(split_units_raw) if isinstance(split_units_raw, (int, str)) else 0
+            except (ValueError, TypeError):
+                split_units = 0
+            
+            if split_units > 1:
+                mapped_name = saved_mapping['mapped_name']
+                mapped_type = saved_mapping['mapped_type']
+                
+                logger.info(f"🔄 Авто-разбивка на {split_units} единиц (из сохранённого маппинга): {item['name'][:50]}...")
+                
+                # Создаём разбивку с предопределённым количеством единиц
+                split_result = split_product_into_units(item, matcher, first_order, predefined_units=split_units)
+                
+                if split_result:
+                    split_items, num_units = split_result
+                    
+                    # Применяем сохранённый маппинг к каждой единице
+                    for split_item in split_items:
+                        split_item['mapped_name'] = mapped_name
+                        split_item['mapped_type'] = mapped_type
+                    
+                    # Сохраняем в кеш
+                    mapping_cache[key] = {'is_split': True, 'split_items': split_items, 'split_units': num_units}
+                    logger.info(f"✅ Авто-разбит на {len(split_items)} единиц: {mapped_name} ({mapped_type})")
+                    continue
+                else:
+                    logger.warning(f"⚠️ Авто-разбивка не удалась, переход к интерактивному режиму")
+        
         # Используем интерактивный или автоматический режим
         mapped_name, mapped_type = match_product_interactive(
             item, 
@@ -914,12 +998,23 @@ def enrich_orders_with_mapping(
         if mapped_name == "SPLIT" and mapped_type is None:
             logger.info(f"🔧 Разбивка товара на единицы: {item['name'][:50]}...")
             
-            # Создаём новую разбивку на единицы
-            split_items = split_product_into_units(item, matcher, first_order)
+            # Проверяем, есть ли сохраненная информация о split_units
+            saved_mapping = matcher.get_mapping(item['name'], item.get('color', ''))
+            saved_split_units = None
+            if saved_mapping and 'split_units' in saved_mapping:
+                try:
+                    saved_split_units = int(saved_mapping['split_units'])
+                except (ValueError, TypeError):
+                    logger.warning(f"⚠️ Некорректное значение split_units: {saved_mapping['split_units']}")
+                    saved_split_units = None
             
-            if split_items:
+            # Создаём новую разбивку на единицы (или используем сохраненное значение)
+            split_result = split_product_into_units(item, matcher, first_order, predefined_units=saved_split_units)
+            
+            if split_result:
+                split_items, num_units = split_result
                 # Разбивка успешна - сохраняем список единиц
-                mapping_cache[key] = {'is_split': True, 'split_items': split_items}
+                mapping_cache[key] = {'is_split': True, 'split_items': split_items, 'split_units': num_units}
                 logger.info(f"✅ Разбит на {len(split_items)} единиц: {item['name'][:50]}...")
                 
                 # После разбивки задаем вопрос заново, но БЕЗ опции разбивки
@@ -933,15 +1028,18 @@ def enrich_orders_with_mapping(
                     skip_split_option=True  # Не показывать опцию разбивки
                 )
                 
-                # Обновляем маппинг для каждой единицы
+                # Обновляем маппинг для каждой единицы + сохраняем split_units
                 if mapped_name and mapped_type:
                     for split_item in split_items:
                         split_item['mapped_name'] = mapped_name
                         split_item['mapped_type'] = mapped_type
                     logger.info(f"✅ Маппинг применен к {len(split_items)} единицам: {mapped_name} ({mapped_type})")
+                    
+                    # Сохраняем mapping с информацией о разбивке
+                    matcher.save_mapping(item['name'], item.get('color', ''), mapped_name, mapped_type, split_units=num_units)
                 
                 # ВАЖНО: НЕ перезаписываем mapping_cache - разбивка уже сохранена выше!
-                # mapping_cache[key] уже содержит {'is_split': True, 'split_items': split_items}
+                # mapping_cache[key] уже содержит {'is_split': True, 'split_items': split_items, 'split_units': num_units}
             else:
                 logger.warning(f"⚠️ Разбивка отменена для: {item['name'][:50]}...")
                 # Fallback к обычному маппингу
