@@ -532,7 +532,8 @@ class OzonParser:
             sync_send_message("📦 Переходим к списку заказов...")
             
             self.page.goto(Config.OZON_ORDERS_URL, timeout=Config.NAVIGATION_TIMEOUT)
-            self.page.wait_for_load_state('networkidle', timeout=Config.DEFAULT_TIMEOUT)
+            # Используем 'domcontentloaded' для надежности
+            self.page.wait_for_load_state('domcontentloaded', timeout=Config.DEFAULT_TIMEOUT)
             
             time.sleep(3)
             
@@ -590,7 +591,9 @@ class OzonParser:
             logger.info(f"Переходим на: {order_url}")
             
             self.page.goto(order_url, timeout=Config.NAVIGATION_TIMEOUT)
-            self.page.wait_for_load_state('networkidle', timeout=Config.DEFAULT_TIMEOUT)
+            # Используем 'domcontentloaded' вместо 'networkidle' - быстрее и надежнее
+            # networkidle может ждать слишком долго на медленных соединениях
+            self.page.wait_for_load_state('domcontentloaded', timeout=Config.DEFAULT_TIMEOUT)
             
             # АНТИДЕТЕКТ: Дополнительная задержка после загрузки 1-3 секунды
             post_delay = random.uniform(1.0, 3.0)

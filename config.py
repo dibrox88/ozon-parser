@@ -24,8 +24,8 @@ class Config:
     USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     
     # Timeouts
-    DEFAULT_TIMEOUT = 30000  # 30 секунд
-    NAVIGATION_TIMEOUT = 60000  # 60 секунд
+    DEFAULT_TIMEOUT = 60000  # 60 секунд (было 30, увеличено для медленных страниц)
+    NAVIGATION_TIMEOUT = 90000  # 90 секунд (было 60, увеличено для детальных страниц заказов)
     
     # Directories
     SCREENSHOTS_DIR = 'screenshots'
