@@ -157,8 +157,8 @@ class OzonParser:
                         logger.debug(f"Найден текст цены: {price_text}")
                         
                         if '₽' in price_text:
-                            # Извлекаем число, убирая все виды пробелов
-                            price_str = price_text.replace('₽', '').replace(' ', '').replace('\xa0', '').replace('\u202f', '').strip()
+                            # Извлекаем число, убирая все виды пробелов и заменяя запятую на точку
+                            price_str = price_text.replace('₽', '').replace(' ', '').replace('\xa0', '').replace('\u202f', '').replace(',', '.').strip()
                             try:
                                 price = float(price_str)
                                 logger.info(f"Найдена сумма заказа: {price} ₽")
@@ -177,8 +177,8 @@ class OzonParser:
                 price_text = price_span.inner_text().strip()
                 if '₽' in price_text:
                     logger.debug(f"Найден span с ценой: {price_text}")
-                    # Извлекаем число
-                    price_str = price_text.replace('₽', '').replace(' ', '').replace('\xa0', '').replace('\u202f', '').strip()
+                    # Извлекаем число, заменяя запятую на точку
+                    price_str = price_text.replace('₽', '').replace(' ', '').replace('\xa0', '').replace('\u202f', '').replace(',', '.').strip()
                     try:
                         price = float(price_str)
                         # Проверяем, что это похоже на общую сумму (больше 100₽)
@@ -457,10 +457,10 @@ class OzonParser:
                             
                             for span in price_spans:
                                 text = span.inner_text().strip()
-                                match = re.search(r'(\d+)\s*x\s*([\d\s\u202f\xa0]+)\s*₽', text)
+                                match = re.search(r'(\d+)\s*x\s*([\d\s\u202f\xa0,]+)\s*₽', text)
                                 if match:
                                     quantity = int(match.group(1))
-                                    price_str = match.group(2).replace(' ', '').replace('\xa0', '').replace('\u202f', '')
+                                    price_str = match.group(2).replace(' ', '').replace('\xa0', '').replace('\u202f', '').replace(',', '.')
                                     price = float(price_str)
                                     logger.debug(f"Найдено: {name} x{quantity} @ {price}₽")
                                     break
@@ -470,9 +470,9 @@ class OzonParser:
                                 headline_span = product_container.query_selector('span.tsHeadline400Small')
                                 if headline_span:
                                     text = headline_span.inner_text().strip()
-                                    match_single = re.search(r'([\d\s\u202f\xa0]+)\s*₽', text)
+                                    match_single = re.search(r'([\d\s\u202f\xa0,]+)\s*₽', text)
                                     if match_single:
-                                        price_str = match_single.group(1).replace(' ', '').replace('\xa0', '').replace('\u202f', '')
+                                        price_str = match_single.group(1).replace(' ', '').replace('\xa0', '').replace('\u202f', '').replace(',', '.')
                                         price = float(price_str)
                                         quantity = 1
                                         logger.debug(f"Найдено: {name} x1 @ {price}₽")
