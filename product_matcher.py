@@ -694,8 +694,13 @@ def match_product_interactive(
                                 logger.info(f"✅ Выбран товар по номеру: {mapped_name} ({mapped_type})")
                             else:
                                 logger.warning(f"⚠️ Некорректный номер товара {product_number}")
-                                mapped_name = name
-                                mapped_type = matcher.DEFAULT_TYPE
+                                if matches and len(matches) > 0:
+                                    best_match = matches[0]
+                                    mapped_name = best_match['name']
+                                    mapped_type = best_match['type']
+                                else:
+                                    mapped_name = name
+                                    mapped_type = matcher.DEFAULT_TYPE
                         else:
                             # Пользователь ввел название товара - ищем по каталогу
                             search_text = product_response.strip()
@@ -863,19 +868,31 @@ def match_product_interactive(
         )
         
         if not type_response or not type_response.strip().isdigit():
-            logger.warning(f"⚠️ Некорректный выбор типа - используем лучшее совпадение")
-            best_match = matches[0]
-            mapped_name = best_match['name']
-            mapped_type = best_match['type']
+            logger.warning(f"⚠️ Некорректный выбор типа - используем лучшее совпадение из найденных")
+            # Проверяем, что matches существует (для варианта 6 из списка совпадений)
+            if matches and len(matches) > 0:
+                best_match = matches[0]
+                mapped_name = best_match['name']
+                mapped_type = best_match['type']
+            else:
+                # Нет совпадений (вариант 6 вызван из начальной логики) - используем лучшее название
+                logger.warning(f"⚠️ Нет доступных совпадений - используем исходное название")
+                mapped_name = name
+                mapped_type = matcher.DEFAULT_TYPE
         else:
             type_number = int(type_response.strip())
             selected_type = matcher.get_type_name(type_number)
             
             if not selected_type:
-                logger.warning(f"⚠️ Некорректный номер типа {type_number} - используем лучшее совпадение")
-                best_match = matches[0]
-                mapped_name = best_match['name']
-                mapped_type = best_match['type']
+                logger.warning(f"⚠️ Некорректный номер типа {type_number} - используем fallback")
+                # Проверяем наличие matches
+                if matches and len(matches) > 0:
+                    best_match = matches[0]
+                    mapped_name = best_match['name']
+                    mapped_type = best_match['type']
+                else:
+                    mapped_name = name
+                    mapped_type = matcher.DEFAULT_TYPE
             else:
                 logger.info(f"✅ Выбран тип: {selected_type}")
                 
@@ -884,10 +901,15 @@ def match_product_interactive(
                 
                 if not products_by_type:
                     logger.warning(f"⚠️ Нет товаров с типом '{selected_type}'")
-                    sync_send_message(f"⚠️ Нет товаров с типом '{selected_type}'\n\nИспользуем лучшее совпадение.")
-                    best_match = matches[0]
-                    mapped_name = best_match['name']
-                    mapped_type = best_match['type']
+                    sync_send_message(f"⚠️ Нет товаров с типом '{selected_type}'\n\nИспользуем fallback.")
+                    # Проверяем наличие matches
+                    if matches and len(matches) > 0:
+                        best_match = matches[0]
+                        mapped_name = best_match['name']
+                        mapped_type = best_match['type']
+                    else:
+                        mapped_name = name
+                        mapped_type = matcher.DEFAULT_TYPE
                 else:
                     # Сортируем: сначала последние добавленные (из конца таблицы)
                     products_by_type = list(reversed(products_by_type))
@@ -918,10 +940,14 @@ def match_product_interactive(
                     )
                     
                     if not product_response:
-                        logger.warning(f"⚠️ Нет ответа - используем лучшее совпадение")
-                        best_match = matches[0]
-                        mapped_name = best_match['name']
-                        mapped_type = best_match['type']
+                        logger.warning(f"⚠️ Нет ответа - используем fallback")
+                        if matches and len(matches) > 0:
+                            best_match = matches[0]
+                            mapped_name = best_match['name']
+                            mapped_type = best_match['type']
+                        else:
+                            mapped_name = name
+                            mapped_type = matcher.DEFAULT_TYPE
                     elif product_response.strip().isdigit():
                         # Пользователь ввел номер товара
                         product_number = int(product_response.strip())
