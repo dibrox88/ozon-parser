@@ -94,8 +94,8 @@ class TelegramNotifier:
         Args:
             prompt: Текст запроса
             timeout: Таймаут ожидания в секундах
-            options: Список кнопок [(текст_кнопки, значение_ответа), ...]
-                    Например: [("Вариант 1", "1"), ("Вариант 2", "2")]
+            options: Список кнопок [(значение_ответа, текст_кнопки), ...]
+                    Например: [("1", "1️⃣ Вариант 1"), ("2", "2️⃣ Вариант 2")]
         """
         prompt_id = self.prompt_manager.create_prompt(prompt, timeout if timeout > 0 else None)
         
@@ -123,7 +123,7 @@ class TelegramNotifier:
             for i in range(0, len(options), 2):
                 row = []
                 for j in range(i, min(i + 2, len(options))):
-                    text, value = options[j]
+                    value, text = options[j]  # options передаются как (value, text)
                     # callback_data = значение ответа для автоматической отправки
                     row.append(InlineKeyboardButton(text, callback_data=f"prompt:{prompt_id}:{value}"))
                 keyboard.append(row)
@@ -211,8 +211,8 @@ def sync_wait_for_input(
     Args:
         prompt: Текст запроса
         timeout: Таймаут ожидания в секундах
-        options: Список кнопок [(текст_кнопки, значение_ответа), ...]
-                Например: [("✅ Да", "yes"), ("❌ Нет", "no")]
+        options: Список кнопок [(значение_ответа, текст_кнопки), ...]
+                Например: [("yes", "✅ Да"), ("no", "❌ Нет")]
     """
     notifier = TelegramNotifier()
     return _run_async(notifier.wait_for_user_input(prompt, timeout, options))
