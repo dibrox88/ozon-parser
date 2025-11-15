@@ -80,6 +80,25 @@ class ProductMatcher:
             lines.append(f"  <b>{num}</b> - {type_name}")
         return "\n".join(lines)
     
+    def get_type_button_options(self) -> List[tuple[str, str]]:
+        """
+        Создать список кнопок для выбора типа.
+        
+        Returns:
+            Список кортежей (значение, текст_кнопки)
+        """
+        from typing import List
+        options = []
+        emoji_numbers = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+        
+        for num, type_name in sorted(self.type_map.items()):
+            emoji = emoji_numbers[num - 1] if num <= 10 else f"{num}️⃣"
+            # Ограничиваем длину названия типа для кнопки
+            short_name = type_name[:15] + "..." if len(type_name) > 15 else type_name
+            options.append((str(num), f"{emoji} {short_name}"))
+        
+        return options
+    
     def _load_mappings(self) -> Dict[str, Dict[str, str | int]]:
         """Загрузить сохранённые сопоставления из файла."""
         try:
@@ -267,7 +286,11 @@ def clarify_color_if_needed(color: str, item_name: str) -> str:
         
         sync_send_message(message)
         
-        response = sync_wait_for_input("Выберите цвет (1 или 2):", timeout=0)  # Без таймаута
+        response = sync_wait_for_input(
+            "Выберите цвет:", 
+            timeout=0, 
+            options=[("1", "1️⃣ Black"), ("2", "2️⃣ White")]
+        )
         
         if response and response.strip() == '2':
             logger.info(f"✅ Пользователь выбрал цвет: White")
@@ -329,7 +352,11 @@ def split_product_into_units(
         sync_send_message(message)
         
         from notifier import sync_wait_for_input
-        units_input = sync_wait_for_input("Введите количество штук или 0:", timeout=0)  # Без таймаута
+        units_input = sync_wait_for_input(
+            "Введите количество штук или 0:", 
+            timeout=0,
+            options=[("2", "2️⃣"), ("3", "3️⃣"), ("5", "5️⃣"), ("0", "❌ Отмена")]
+        )
         
         if not units_input or units_input.strip() == '0':
             sync_send_message("❌ Разбивка отменена")
@@ -519,10 +546,21 @@ def match_product_interactive(
         
         sync_send_message(message)
         
+        # Собираем кнопки в зависимости от доступных опций
+        button_options = [
+            ("1", "1️⃣ Расходники"),
+            ("2", "2️⃣ Каталог")
+        ]
+        if not skip_split_option:
+            button_options.append(("3", "3️⃣ Разбить"))
+        if order_number and excluded_manager:
+            button_options.append(("4", "4️⃣ Исключить заказ"))
+        
         from notifier import sync_wait_for_input
         response = sync_wait_for_input(
-            "Отправьте 1, 2, 3 или 4:",
-            timeout=300
+            "Выберите действие:",
+            timeout=300,
+            options=button_options
         )
         
         if not response:
@@ -562,9 +600,14 @@ def match_product_interactive(
             
             # Шаг 1: Показываем список типов
             type_list_msg = matcher.get_type_list_message()
-            sync_send_message(f"{type_list_msg}\n\n⏳ Введите номер типа:")
+            sync_send_message(f"{type_list_msg}\n\n⏳ Выберите тип:")
             
-            type_response = sync_wait_for_input("Введите номер типа:", timeout=0)  # Без таймаута
+            type_button_options = matcher.get_type_button_options()
+            type_response = sync_wait_for_input(
+                "Выберите номер типа:", 
+                timeout=0,
+                options=type_button_options
+            )
             
             if not type_response or not type_response.strip().isdigit():
                 logger.warning(f"⚠️ Некорректный выбор типа - используем тип по умолчанию для: {name}")
@@ -602,12 +645,20 @@ def match_product_interactive(
                             product_price = product.get('price', 0)
                             product_list_msg += f"{idx}. <b>{product_name}</b> - {product_price} ₽\n"
                         
-                        product_list_msg += f"\n⏳ Введите номер товара (1-{len(products_to_show)}) или название:"
+                        product_list_msg += f"\n⏳ Выберите товар (1-{len(products_to_show)}) или введите название:"
                         sync_send_message(product_list_msg)
                         
+                        # Создаем кнопки для товаров
+                        emoji_numbers = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+                        product_button_options = []
+                        for idx in range(len(products_to_show)):
+                            emoji = emoji_numbers[idx] if idx < 10 else f"{idx+1}️⃣"
+                            product_button_options.append((str(idx + 1), emoji))
+                        
                         product_response = sync_wait_for_input(
-                            f"Введите номер товара (1-{len(products_to_show)}) или название:",
-                            timeout=0  # Без таймаута
+                            f"Выберите товар (1-{len(products_to_show)}):",
+                            timeout=0,
+                            options=product_button_options
                         )
                         
                         if not product_response:
@@ -717,10 +768,19 @@ def match_product_interactive(
     
     sync_send_message(message)
     
+    # Собираем кнопки (1-5 для совпадений + дополнительные опции)
+    button_options = [(str(i+1), f"{i+1}️⃣") for i in range(min(5, len(matches)))]
+    button_options.append(("6", "6️⃣ Каталог"))
+    if not skip_split_option:
+        button_options.append(("7", "7️⃣ Разбить"))
+    if order_number and excluded_manager:
+        button_options.append(("8", "8️⃣ Исключить"))
+    
     from notifier import sync_wait_for_input
     response = sync_wait_for_input(
-        "Выберите номер (1-8):",
-        timeout=300
+        "Выберите вариант:",
+        timeout=300,
+        options=button_options
     )
     
     if not response:
@@ -757,9 +817,14 @@ def match_product_interactive(
         
         # Шаг 1: Показываем список типов
         type_list_msg = matcher.get_type_list_message()
-        sync_send_message(f"{type_list_msg}\n\n⏳ Введите номер типа:")
+        sync_send_message(f"{type_list_msg}\n\n⏳ Выберите тип:")
         
-        type_response = sync_wait_for_input("Введите номер типа:", timeout=0)  # Без таймаута
+        type_button_options = matcher.get_type_button_options()
+        type_response = sync_wait_for_input(
+            "Выберите номер типа:", 
+            timeout=0,
+            options=type_button_options
+        )
         
         if not type_response or not type_response.strip().isdigit():
             logger.warning(f"⚠️ Некорректный выбор типа - используем лучшее совпадение")
@@ -800,12 +865,20 @@ def match_product_interactive(
                         product_price = product.get('price', 0)
                         product_list_msg += f"{idx}. <b>{product_name}</b> - {product_price} ₽\n"
                     
-                    product_list_msg += f"\n⏳ Введите номер товара (1-{len(products_to_show)}) или название:"
+                    product_list_msg += f"\n⏳ Выберите товар (1-{len(products_to_show)}) или введите название:"
                     sync_send_message(product_list_msg)
                     
+                    # Создаем кнопки для товаров
+                    emoji_numbers = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+                    product_button_options = []
+                    for idx in range(len(products_to_show)):
+                        emoji = emoji_numbers[idx] if idx < 10 else f"{idx+1}️⃣"
+                        product_button_options.append((str(idx + 1), emoji))
+                    
                     product_response = sync_wait_for_input(
-                        f"Введите номер товара (1-{len(products_to_show)}) или название:",
-                        timeout=0  # Без таймаута
+                        f"Выберите товар (1-{len(products_to_show)}):",
+                        timeout=0,
+                        options=product_button_options
                     )
                     
                     if not product_response:

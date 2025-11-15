@@ -1,10 +1,17 @@
 """Модуль уведомлений через Telegram."""
 import asyncio
-from typing import Optional
-from telegram import Bot
-from telegram.error import TelegramError
+import threading
+from typing import Awaitable, Optional, TypeVar, List, Tuple
+
 from loguru import logger
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import TelegramError
+
 from config import Config
+from prompt_manager import PromptManager
+
+PROMPT_MANAGER = PromptManager()
+_T = TypeVar("_T")
 
 
 def get_or_create_eventloop():
@@ -27,6 +34,7 @@ class TelegramNotifier:
         """Инициализация."""
         self.bot = Bot(token=Config.TELEGRAM_BOT_TOKEN)
         self.chat_id = Config.TELEGRAM_CHAT_ID
+        self.prompt_manager = PROMPT_MANAGER
         
     async def send_message(self, message: str) -> bool:
         """
@@ -74,182 +82,137 @@ class TelegramNotifier:
             logger.error(f"Ошибка отправки фото: {e}")
             return False
     
-    async def wait_for_user_input(self, prompt: str, timeout: int = 300) -> Optional[str]:
+    async def wait_for_user_input(
+        self, 
+        prompt: str, 
+        timeout: int = 300, 
+        options: Optional[List[Tuple[str, str]]] = None
+    ) -> Optional[str]:
         """
-        Отправить запрос и ждать ответа от пользователя.
+        Отправить запрос и дождаться ответа без getUpdates-конфликтов.
         
         Args:
             prompt: Текст запроса
-            timeout: Таймаут ожидания в секундах (0 = без таймаута)
-            
-        Returns:
-            Ответ пользователя или None
+            timeout: Таймаут ожидания в секундах
+            options: Список кнопок [(текст_кнопки, значение_ответа), ...]
+                    Например: [("Вариант 1", "1"), ("Вариант 2", "2")]
         """
-        # СНАЧАЛА очищаем старые updates ДО отправки промпта
+        prompt_id = self.prompt_manager.create_prompt(prompt, timeout if timeout > 0 else None)
+        
+        # Формируем сообщение
+        message_parts = [
+            f"⏳ {prompt}",
+        ]
+        
+        # Если есть кнопки - не добавляем инструкцию по ответу
+        if not options:
+            message_parts.extend([
+                "✍️ Ответьте на ЭТО сообщение или начните ответ с кода запроса",
+                f"🆔 Код запроса: <b>{prompt_id}</b>",
+            ])
+        else:
+            message_parts.append(f"🆔 Код: <b>{prompt_id}</b>")
+        
+        message = "\n".join(message_parts)
+        
+        # Создаем inline-кнопки если они переданы
+        reply_markup = None
+        if options:
+            keyboard = []
+            # Группируем кнопки по 2 в ряд
+            for i in range(0, len(options), 2):
+                row = []
+                for j in range(i, min(i + 2, len(options))):
+                    text, value = options[j]
+                    # callback_data = значение ответа для автоматической отправки
+                    row.append(InlineKeyboardButton(text, callback_data=f"prompt:{prompt_id}:{value}"))
+                keyboard.append(row)
+            reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Отправляем сообщение с кнопками
         try:
-            # Одна попытка с большим лимитом
-            updates = await self.bot.get_updates(limit=100, timeout=1)
-            if updates:
-                last_update_id = updates[-1].update_id
-                # Подтверждаем все updates
-                await self.bot.get_updates(offset=last_update_id + 1, timeout=1)
-                logger.info(f"✅ Очищено {len(updates)} старых updates перед отправкой промпта")
-            else:
-                last_update_id = 0
-                logger.info(f"✅ Нет старых updates")
-        except Exception as e:
-            logger.warning(f"Не удалось очистить старые updates: {e}")
-            last_update_id = 0
+            await self.bot.send_message(
+                chat_id=self.chat_id,
+                text=message,
+                parse_mode='HTML',
+                reply_markup=reply_markup
+            )
+        except TelegramError as e:
+            logger.error(f"Ошибка отправки промпта: {e}")
+            return None
         
-        # ТЕПЕРЬ отправляем промпт - пользователь увидит его только после очистки
-        await self.send_message(f"⏳ {prompt}")
-        logger.info(f"📤 Промпт отправлен, ожидаем ответа с update_id > {last_update_id}")
-        
-        # Если timeout=0, ждем бесконечно
+        logger.info(f"📤 Промпт {prompt_id} отправлен, ожидаем ответ пользователя")
+
+        loop = asyncio.get_event_loop()
         use_timeout = timeout > 0
-        start_time = asyncio.get_event_loop().time()
-        
+        start_time = loop.time()
+
         while True:
-            # Проверяем таймаут только если он задан
-            if use_timeout and (asyncio.get_event_loop().time() - start_time) >= timeout:
-                logger.warning("Таймаут ожидания ответа от пользователя")
+            response = self.prompt_manager.get_response_text(prompt_id)
+            if response is not None:
+                logger.info(f"✅ Получен ответ для промпта {prompt_id}: {response}")
+                return response
+
+            if use_timeout and (loop.time() - start_time) >= timeout:
+                logger.warning(f"Таймаут ожидания ответа по промпту {prompt_id}")
+                self.prompt_manager.mark_expired(prompt_id)
                 await self.send_message("❌ Время ожидания истекло")
                 return None
-            try:
-                # Проверяем новые сообщения с КОРОТКИМ timeout чтобы минимизировать конфликты
-                updates = await self.bot.get_updates(
-                    offset=last_update_id + 1,
-                    timeout=3  # Уменьшено с 10 до 3 для меньших конфликтов
-                )
-                
-                for update in updates:
-                    if (update.message and 
-                        update.message.chat_id == int(self.chat_id) and
-                        update.message.text):
-                        
-                        response = update.message.text.strip()
-                        logger.info(f"Получен ответ от пользователя: {response}")
-                        
-                        # ВАЖНО: Обновляем last_update_id ПЕРЕД подтверждением
-                        last_update_id = update.update_id
-                        
-                        # Подтверждаем получение всех updates до этого момента
-                        await self.bot.get_updates(offset=last_update_id + 1, timeout=1)
-                        
-                        # НЕ отправляем подтверждение здесь - это сделает вызывающий код
-                        # чтобы избежать дублирования сообщений
-                        logger.info(f"✅ Получен и подтвержден ответ: {response}")
-                        
-                        return response
-                    
-                    last_update_id = update.update_id
-                    
-            except TelegramError as e:
-                # Игнорируем конфликты getUpdates - они могут быть из-за основного бота
-                if "Conflict" in str(e) or "terminated by other getUpdates" in str(e):
-                    logger.warning(f"⚠️ Конфликт getUpdates (ожидается при работающем боте), продолжаем...")
-                    await asyncio.sleep(2)  # Увеличенная пауза при конфликте
-                else:
-                    logger.error(f"Ошибка при ожидании ответа: {e}")
-                    await asyncio.sleep(1)
-            except Exception as e:
-                logger.error(f"Неожиданная ошибка при ожидании ответа: {e}")
-                await asyncio.sleep(1)
+
+            await asyncio.sleep(1.5)
+
+
+def _run_in_thread(coro: Awaitable[_T]) -> _T:
+    """Выполнить корутину в отдельном event loop и вернуть результат."""
+    result: list[_T] = []
+
+    def runner():
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        try:
+            value = new_loop.run_until_complete(coro)
+        finally:
+            new_loop.close()
+        result.append(value)
+
+    thread = threading.Thread(target=runner)
+    thread.start()
+    thread.join()
+    return result[0]
+
+
+def _run_async(coro: Awaitable[_T]) -> _T:
+    loop = get_or_create_eventloop()
+    if loop.is_running():
+        return _run_in_thread(coro)
+    return loop.run_until_complete(coro)
 
 
 def sync_send_message(message: str) -> bool:
-    """
-    Синхронная обертка для отправки сообщения.
-    
-    Args:
-        message: Текст сообщения
-        
-    Returns:
-        True если успешно
-    """
+    """Синхронная отправка сообщения."""
     notifier = TelegramNotifier()
-    loop = get_or_create_eventloop()
-    
-    if loop.is_running():
-        # Создаем новый event loop в отдельном потоке
-        import threading
-        result = [False]
-        
-        def run_async():
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
-            result[0] = new_loop.run_until_complete(notifier.send_message(message))
-            new_loop.close()
-        
-        thread = threading.Thread(target=run_async)
-        thread.start()
-        thread.join()
-        return result[0]
-    else:
-        return loop.run_until_complete(notifier.send_message(message))
+    return _run_async(notifier.send_message(message))
 
 
 def sync_send_photo(photo_path: str, caption: Optional[str] = None) -> bool:
-    """
-    Синхронная обертка для отправки фото.
-    
-    Args:
-        photo_path: Путь к фото
-        caption: Подпись
-        
-    Returns:
-        True если успешно
-    """
+    """Синхронная отправка фото."""
     notifier = TelegramNotifier()
-    loop = get_or_create_eventloop()
-    
-    if loop.is_running():
-        # Создаем новый event loop в отдельном потоке
-        import threading
-        result = [False]
-        
-        def run_async():
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
-            result[0] = new_loop.run_until_complete(notifier.send_photo(photo_path, caption))
-            new_loop.close()
-        
-        thread = threading.Thread(target=run_async)
-        thread.start()
-        thread.join()
-        return result[0]
-    else:
-        return loop.run_until_complete(notifier.send_photo(photo_path, caption))
+    return _run_async(notifier.send_photo(photo_path, caption))
 
 
-def sync_wait_for_input(prompt: str, timeout: int = 300) -> Optional[str]:
+def sync_wait_for_input(
+    prompt: str, 
+    timeout: int = 300, 
+    options: Optional[List[Tuple[str, str]]] = None
+) -> Optional[str]:
     """
-    Синхронная обертка для ожидания ввода.
+    Синхронное ожидание ответа пользователя.
     
     Args:
         prompt: Текст запроса
-        timeout: Таймаут в секундах
-        
-    Returns:
-        Ответ пользователя
+        timeout: Таймаут ожидания в секундах
+        options: Список кнопок [(текст_кнопки, значение_ответа), ...]
+                Например: [("✅ Да", "yes"), ("❌ Нет", "no")]
     """
     notifier = TelegramNotifier()
-    loop = get_or_create_eventloop()
-    
-    if loop.is_running():
-        # Создаем новый event loop в отдельном потоке
-        import threading
-        result: list[Optional[str]] = [None]
-        
-        def run_async():
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
-            result[0] = new_loop.run_until_complete(notifier.wait_for_user_input(prompt, timeout))
-            new_loop.close()
-        
-        thread = threading.Thread(target=run_async)
-        thread.start()
-        thread.join()
-        return result[0]
-    else:
-        return loop.run_until_complete(notifier.wait_for_user_input(prompt, timeout))
+    return _run_async(notifier.wait_for_user_input(prompt, timeout, options))

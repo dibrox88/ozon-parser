@@ -11,7 +11,7 @@ from typing import Optional
 
 from loguru import logger
 from telegram import BotCommand, Update
-from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters
 
 from config import Config
 from prompt_manager import PromptManager
@@ -215,12 +215,18 @@ async def handle_prompt_response(update: Update, context: ContextTypes.DEFAULT_T
     reply_text = update.message.reply_to_message.text if update.message.reply_to_message else None
     prompt_id = _extract_prompt_id(text, reply_text or "")
     
-    # Если код промпта не найден - используем самый старый ожидающий промпт
+    # Если код промпта не найден - используем самый новый ожидающий промпт
     if not prompt_id:
+        # Сначала очищаем истекшие промпты
+        expired_count = PROMPT_MANAGER.cleanup_expired_prompts()
+        if expired_count > 0:
+            logger.info("Очищено истекших промптов: %d", expired_count)
+        
+        # Теперь ищем актуальный промпт
         oldest_prompt = PROMPT_MANAGER.get_oldest_waiting_prompt()
         if oldest_prompt:
             prompt_id = oldest_prompt.get("id")
-            logger.info("Код промпта не указан, используем oldest waiting prompt: %s", prompt_id)
+            logger.info("Код промпта не указан, используем newest waiting prompt: %s", prompt_id)
         
         # Нет активных промптов или prompt_id не извлечен - игнорируем сообщение
         if not prompt_id:
@@ -244,6 +250,43 @@ async def handle_prompt_response(update: Update, context: ContextTypes.DEFAULT_T
         logger.warning("Не удалось найти активный промпт %s для ответа", prompt_id)
         await update.message.reply_text(
             "⚠️ Не удалось найти активный запрос с указанным кодом. Возможно, он уже закрыт.",
+            parse_mode='HTML'
+        )
+
+
+async def handle_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработка нажатий на inline-кнопки."""
+    query = update.callback_query
+    if not query or not query.data or not query.message:
+        return
+    
+    await query.answer()
+    
+    # Формат callback_data: "prompt:PROMPT_ID:VALUE"
+    if not query.data.startswith("prompt:"):
+        return
+    
+    parts = query.data.split(":", 2)
+    if len(parts) != 3:
+        return
+    
+    _, prompt_id, value = parts
+    
+    # Безопасно получаем текст сообщения (query.message может быть MaybeInaccessibleMessage)
+    original_text = getattr(query.message, 'text', '') or ""
+    
+    user_label = _format_user_label(update)
+    
+    if PROMPT_MANAGER.set_response(prompt_id, value, user=user_label):
+        logger.info("Ответ для промпта %s сохранен от %s через кнопку: %s", prompt_id, user_label, value)
+        await query.edit_message_text(
+            f"{original_text}\n\n✅ <b>Выбрано:</b> {value}",
+            parse_mode='HTML'
+        )
+    else:
+        logger.warning("Не удалось найти активный промпт %s для ответа", prompt_id)
+        await query.edit_message_text(
+            f"{original_text}\n\n⚠️ Запрос уже закрыт",
             parse_mode='HTML'
         )
 
@@ -1044,6 +1087,11 @@ def main():
     application.add_handler(CommandHandler("cron_status", cron_status_command))
     application.add_handler(CommandHandler("cron_on", cron_on_command))
     application.add_handler(CommandHandler("cron_off", cron_off_command))
+    
+    # Обработчик callback-кнопок (должен быть перед текстовым обработчиком)
+    application.add_handler(CallbackQueryHandler(handle_button_callback))
+    
+    # Обработчик текстовых сообщений (последним, т.к. ловит всё)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_prompt_response))
     
     # Добавляем обработчик ошибок

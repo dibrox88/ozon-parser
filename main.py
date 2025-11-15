@@ -513,13 +513,16 @@ def main():
                                     item_type = item.get('type', 'Не указан')
                                     if item_type not in types_stats:
                                         types_stats[item_type] = {'count': 0, 'sum': 0}
-                                    types_stats[item_type]['count'] += item.get('quantity', 0)
-                                    types_stats[item_type]['sum'] += item.get('quantity', 0) * item.get('price', 0)
+                                    quantity = item.get('quantity', 0) or 0
+                                    price = item.get('price', 0) or 0
+                                    types_stats[item_type]['count'] += quantity
+                                    types_stats[item_type]['sum'] += quantity * price
                             
                             if types_stats:
                                 export_message += "<b>📊 Статистика по типам:</b>\n"
                                 for item_type, stats in sorted(types_stats.items()):
-                                    export_message += f"\n• {item_type}: {stats['count']} шт ({stats['sum']:,.0f} ₽)"
+                                    total_sum = stats['sum'] or 0
+                                    export_message += f"\n• {item_type}: {stats['count']} шт ({total_sum:,.0f} ₽)"
                             
                             sync_send_message(export_message)
                             
