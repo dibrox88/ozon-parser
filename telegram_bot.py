@@ -164,10 +164,9 @@ async def monitor_parser_process(update: Update, process: subprocess.Popen):
     
     try:
         # Ждем завершения процесса с проверкой каждые 5 секунд
-        max_wait_time = 1800  # 30 минут максимум
-        elapsed = 0
+        # Таймаут отключен - парсинг может работать неограниченно долго
         
-        while elapsed < max_wait_time:
+        while True:
             # Проверяем завершился ли процесс
             returncode = process.poll()
             
@@ -182,18 +181,6 @@ async def monitor_parser_process(update: Update, process: subprocess.Popen):
             
             # Ждем 5 секунд перед следующей проверкой
             await asyncio.sleep(5)
-            elapsed += 5
-        
-        else:
-            # Таймаут - убиваем процесс
-            logger.error("⏱️ Парсинг превысил лимит времени (30 мин)")
-            process.kill()
-            if update.message:
-                await update.message.reply_text(
-                    "⏱️ <b>Превышено время выполнения</b>\n\n"
-                    "Парсинг занял более 30 минут и был остановлен.",
-                    parse_mode='HTML'
-                )
     
     except Exception as e:
         logger.error(f"❌ Ошибка мониторинга процесса: {e}")

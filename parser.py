@@ -663,7 +663,7 @@ class OzonParser:
             
             # Отправляем информацию в Telegram
             order_url = f"https://www.ozon.ru/my/orderdetails/?order={order_number}"
-            message = f"📦 Заказ <a href='{order_url}'>{order_number}</a>\n\n"
+            message = f"📦 <a href='{order_url}'>{order_number}</a>\n\n"
             message += f"📅 Дата: {order_date}\n"
             message += f"💰 Сумма: {total_amount} ₽\n"
             message += f"📊 Товаров: {total_items_quantity} шт ({len(all_items)} позиций)\n\n"
