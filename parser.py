@@ -598,6 +598,9 @@ class OzonParser:
             
             # Парсим общую сумму
             total_amount = self._parse_order_total()
+            if total_amount is None:
+                logger.warning("⚠️ Не удалось определить сумму заказа")
+                total_amount = 0.0
             logger.info(f"Сумма заказа: {total_amount} ₽")
             
             # Парсим товары по отправлениям
