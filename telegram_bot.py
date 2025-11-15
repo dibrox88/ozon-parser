@@ -1,18 +1,20 @@
-"""
-Telegram бот для управления парсером Ozon.
-Позволяет запускать парсинг вручную через команды.
-"""
+"""Telegram бот для управления парсером Ozon."""
 
 import asyncio
-import subprocess
-import os
-import signal
 import io
+import os
+import re
+import signal
+import subprocess
 from datetime import datetime
-from telegram import Update, BotCommand
-from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters
+from typing import Optional
+
 from loguru import logger
+from telegram import BotCommand, Update
+from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters
+
 from config import Config
+from prompt_manager import PromptManager
 
 # Глобальные переменные для отслеживания статуса парсинга
 parsing_in_progress = False
@@ -22,10 +24,33 @@ current_parser_process = None  # Текущий процесс парсера д
 # Состояния для ConversationHandler (parse_range)
 WAITING_LAST_ORDER, WAITING_COUNT = range(2)
 
+PROMPT_MANAGER = PromptManager()
+PROMPT_ID_PATTERN = re.compile(r"\b([A-F0-9]{8})\b", re.IGNORECASE)
+
 
 def check_update(update: Update) -> bool:
     """Проверка что update содержит сообщение и пользователя."""
     return update.message is not None and update.effective_user is not None
+
+def _extract_prompt_id(*texts: str) -> Optional[str]:
+    for text in texts:
+        if not text:
+            continue
+        match = PROMPT_ID_PATTERN.search(text)
+        if match:
+            return match.group(1).upper()
+    return None
+
+
+def _format_user_label(update: Update) -> Optional[str]:
+    user = update.effective_user
+    if not user:
+        return None
+    if user.username:
+        return f"@{user.username}"
+    if user.full_name:
+        return user.full_name
+    return str(user.id)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -176,6 +201,51 @@ async def monitor_parser_process(update: Update, process: subprocess.Popen):
     finally:
         parsing_in_progress = False
         current_parser_process = None
+
+
+async def handle_prompt_response(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработка текстовых ответов на запросы промптов."""
+    if not update.message or not update.message.text:
+        return
+
+    text = update.message.text.strip()
+    if not text:
+        return
+
+    reply_text = update.message.reply_to_message.text if update.message.reply_to_message else None
+    prompt_id = _extract_prompt_id(text, reply_text or "")
+    
+    # Если код промпта не найден - используем самый старый ожидающий промпт
+    if not prompt_id:
+        oldest_prompt = PROMPT_MANAGER.get_oldest_waiting_prompt()
+        if oldest_prompt:
+            prompt_id = oldest_prompt.get("id")
+            logger.info("Код промпта не указан, используем oldest waiting prompt: %s", prompt_id)
+        
+        # Нет активных промптов или prompt_id не извлечен - игнорируем сообщение
+        if not prompt_id:
+            return
+
+    # Удаляем указанный код из сообщения, если пользователь вписал его вручную
+    trimmed_text = text
+    match = PROMPT_ID_PATTERN.search(text)
+    if match:
+        trimmed_text = (text[:match.start()] + text[match.end():]).strip(" -:.,#")
+        if not trimmed_text:
+            trimmed_text = text
+
+    user_label = _format_user_label(update)
+    if PROMPT_MANAGER.set_response(prompt_id, trimmed_text, user=user_label):
+        logger.info("Ответ для промпта %s сохранен от %s", prompt_id, user_label)
+        await update.message.reply_text(
+            f"✍️ Ответ записан для запроса <b>{prompt_id}</b>.", parse_mode='HTML'
+        )
+    else:
+        logger.warning("Не удалось найти активный промпт %s для ответа", prompt_id)
+        await update.message.reply_text(
+            "⚠️ Не удалось найти активный запрос с указанным кодом. Возможно, он уже закрыт.",
+            parse_mode='HTML'
+        )
 
 
 async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -974,6 +1044,7 @@ def main():
     application.add_handler(CommandHandler("cron_status", cron_status_command))
     application.add_handler(CommandHandler("cron_on", cron_on_command))
     application.add_handler(CommandHandler("cron_off", cron_off_command))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_prompt_response))
     
     # Добавляем обработчик ошибок
     application.add_error_handler(error_handler)
