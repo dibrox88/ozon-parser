@@ -499,8 +499,13 @@ def match_product_interactive(
             mapped_name = name
             mapped_type = matcher.DEFAULT_TYPE
         
-        # Уточняем цвет если он некорректный (0) или не указан
-        color = clarify_color_if_needed(color, name)
+        # Уточняем цвет ТОЛЬКО если это НЕ расходники
+        if mapped_type == "расходники":
+            if not color or color == '0':
+                color = 'Black'
+                logger.info(f"🎨 Цвет для расходников автоматически установлен: Black")
+        else:
+            color = clarify_color_if_needed(color, name)
         
         matcher.save_mapping(name, color, mapped_name, mapped_type)
         return mapped_name, mapped_type
@@ -573,10 +578,13 @@ def match_product_interactive(
             mapped_name = name
             mapped_type = matcher.DEFAULT_TYPE
         elif response.strip() == '1':
-            # Использовать тип "расходники"
+            # Использовать тип "расходники" - всегда с цветом Black
             logger.info(f"✅ Пользователь выбрал тип 'расходники' для: {name}")
             mapped_name = name
             mapped_type = "расходники"
+            # Для расходников всегда устанавливаем цвет Black без уточнения
+            color = 'Black'
+            logger.info(f"🎨 Цвет для расходников автоматически установлен: Black")
         elif response.strip() == '3':
             # Разбивка товара на компоненты
             if skip_split_option:
@@ -737,8 +745,15 @@ def match_product_interactive(
             mapped_name = name
             mapped_type = matcher.DEFAULT_TYPE
         
-        # Уточняем цвет если он некорректный (0) или не указан
-        color = clarify_color_if_needed(color, name)
+        # Уточняем цвет ТОЛЬКО если это НЕ расходники
+        # Для расходников всегда используем Black без уточнения
+        if mapped_type == "расходники":
+            if not color or color == '0':
+                color = 'Black'
+                logger.info(f"🎨 Цвет для расходников автоматически установлен: Black")
+        else:
+            # Для других типов уточняем цвет если он некорректный
+            color = clarify_color_if_needed(color, name)
         
         matcher.save_mapping(name, color, mapped_name, mapped_type)
         return mapped_name, mapped_type
@@ -1013,8 +1028,13 @@ def match_product_interactive(
         mapped_name = best_match['name']
         mapped_type = best_match['type']
     
-    # Уточняем цвет если он некорректный (0) или не указан
-    color = clarify_color_if_needed(color, name)
+    # Уточняем цвет ТОЛЬКО если это НЕ расходники
+    if mapped_type == "расходники":
+        if not color or color == '0':
+            color = 'Black'
+            logger.info(f"🎨 Цвет для расходников автоматически установлен: Black")
+    else:
+        color = clarify_color_if_needed(color, name)
     
     # Сохраняем сопоставление
     matcher.save_mapping(name, color, mapped_name, mapped_type)
