@@ -173,20 +173,26 @@ class OzonParser:
             logger.debug("Попытка fallback поиска суммы через все span.tsHeadline400Small")
             all_price_spans = self.page.query_selector_all('span.tsHeadline400Small')
             
+            candidate_prices = []
             for price_span in all_price_spans:
                 price_text = price_span.inner_text().strip()
                 if '₽' in price_text:
-                    logger.debug(f"Найден span с ценой: {price_text}")
                     # Извлекаем число, заменяя запятую на точку
                     price_str = price_text.replace('₽', '').replace(' ', '').replace('\xa0', '').replace('\u202f', '').replace(',', '.').strip()
                     try:
                         price = float(price_str)
-                        # Проверяем, что это похоже на общую сумму (больше 100₽)
+                        # Собираем суммы >= 100₽
                         if price >= 100:
-                            logger.info(f"Найдена сумма заказа (fallback): {price} ₽")
-                            return price
+                            candidate_prices.append(price)
+                            logger.debug(f"Найден кандидат на сумму заказа: {price} ₽")
                     except ValueError:
                         continue
+            
+            # Берем максимальную сумму (скорее всего это итоговая сумма заказа)
+            if candidate_prices:
+                max_price = max(candidate_prices)
+                logger.info(f"Найдена сумма заказа (fallback, max из {len(candidate_prices)} кандидатов): {max_price} ₽")
+                return max_price
             
             logger.warning("Не удалось найти сумму заказа")
             return None
