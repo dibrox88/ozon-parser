@@ -634,13 +634,14 @@ class OzonParser:
             logger.info(f"✅ Заказ {order_number}: дата={order_date}, сумма={total_amount}₽, товаров={total_items_quantity} шт ({len(all_items)} позиций)")
             
             # Отправляем информацию в Telegram
-            message = f"📦 <b>Заказ {order_number}</b>\n\n"
+            order_url = f"https://www.ozon.ru/my/orderdetails/?order={order_number}"
+            message = f"📦 Заказ <a href='{order_url}'>{order_number}</a>\n\n"
             message += f"📅 Дата: {order_date}\n"
             message += f"💰 Сумма: {total_amount} ₽\n"
             message += f"📊 Товаров: {total_items_quantity} шт ({len(all_items)} позиций)\n\n"
             
             if all_items:
-                message += "🛍 <b>Товары:</b>\n"
+                message += "🛍 Товары:\n"
                 for i, item in enumerate(all_items[:5], 1):  # Показываем первые 5
                     message += f"{i}. {item['name']}\n"
                     message += f"   {item['quantity']} шт x {item['price']} ₽ = {item['quantity'] * item['price']} ₽\n"

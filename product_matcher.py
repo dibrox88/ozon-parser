@@ -506,6 +506,10 @@ def match_product_interactive(
         return mapped_name, mapped_type
     
     # Интерактивный режим: запрашиваем у пользователя
+    # Инициализируем переменные на случай, если не будет выбора
+    mapped_name = name
+    mapped_type = matcher.DEFAULT_TYPE
+    
     if not matches:
         # Преобразуем цвет для отображения
         display_color = color if color and color != '0' else 'не указан'
@@ -526,11 +530,12 @@ def match_product_interactive(
 • Цена: {price} ₽"""
         
         if order_number:
-            message += f"\n• Заказ: <code>{order_number}</code>"
+            order_url = f"https://www.ozon.ru/my/orderdetails/?order={order_number}"
+            message += f"\n• Заказ: <a href='{order_url}'>{order_number}</a>"
         
         message += f"""
 
-❓ <b>Предлагаем тип по умолчанию:</b> <code>{matcher.DEFAULT_TYPE}</code>
+❓ Предлагаем тип по умолчанию: {matcher.DEFAULT_TYPE}"
 
 💡 <b>Варианты ответа:</b>
 1. Отправьте <code>1</code> - использовать тип "расходники"
@@ -581,8 +586,22 @@ def match_product_interactive(
                 mapped_type = matcher.DEFAULT_TYPE
             else:
                 logger.info(f"🔧 Пользователь выбрал разбивку для: {name}")
-                # Вернем специальный маркер - обработка будет в enrich_orders_with_mapping
-                return "SPLIT", None
+                # Выполняем разбивку прямо здесь
+                split_result = split_product_into_units(
+                    item,
+                    matcher,
+                    order_number=order_number,
+                    predefined_units=None  # Запросим у пользователя
+                )
+                
+                if split_result:
+                    # Разбивка успешна - вернем специальный маркер
+                    return "SPLIT", None
+                else:
+                    # Разбивка отменена - используем тип по умолчанию
+                    logger.info("⏭️ Разбивка отменена, используем тип по умолчанию")
+                    mapped_name = name
+                    mapped_type = matcher.DEFAULT_TYPE
         elif response.strip() == '4':
             if order_number and excluded_manager:
                 # Исключаем весь заказ
@@ -738,9 +757,10 @@ def match_product_interactive(
 • Цена: {price} ₽"""
     
     if order_number:
-        message += f"\n• Заказ: <code>{order_number}</code>"
+        order_url = f"https://www.ozon.ru/my/orderdetails/?order={order_number}"
+        message += f"\n• Заказ: <a href='{order_url}'>{order_number}</a>"
     
-    message += "\n\n✅ <b>Предлагаемые варианты:</b>"
+    message += "\n\n✅ Предлагаемые варианты:"
     
     # Собираем уникальные названия и типы
     unique_names = []
@@ -799,7 +819,23 @@ def match_product_interactive(
             mapped_type = best_match['type']
         else:
             logger.info(f"🔧 Пользователь выбрал разбивку для: {name}")
-            return "SPLIT", None
+            # Выполняем разбивку прямо здесь
+            split_result = split_product_into_units(
+                item,
+                matcher,
+                order_number=order_number,
+                predefined_units=None  # Запросим у пользователя
+            )
+            
+            if split_result:
+                # Разбивка успешна - вернем специальный маркер
+                return "SPLIT", None
+            else:
+                # Разбивка отменена - используем лучшее совпадение
+                logger.info("⏭️ Разбивка отменена, используем лучшее совпадение")
+                best_match = matches[0]
+                mapped_name = best_match['name']
+                mapped_type = best_match['type']
     elif response.strip() == '8':
         if order_number and excluded_manager:
             excluded_manager.add_excluded(order_number)
