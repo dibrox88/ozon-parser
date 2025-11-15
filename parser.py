@@ -169,6 +169,25 @@ class OzonParser:
                     else:
                         logger.debug("Не найден span.tsHeadline400Small в родительском контейнере")
             
+            # Fallback: пробуем найти любой span.tsHeadline400Small с суммой ₽
+            logger.debug("Попытка fallback поиска суммы через все span.tsHeadline400Small")
+            all_price_spans = self.page.query_selector_all('span.tsHeadline400Small')
+            
+            for price_span in all_price_spans:
+                price_text = price_span.inner_text().strip()
+                if '₽' in price_text:
+                    logger.debug(f"Найден span с ценой: {price_text}")
+                    # Извлекаем число
+                    price_str = price_text.replace('₽', '').replace(' ', '').replace('\xa0', '').replace('\u202f', '').strip()
+                    try:
+                        price = float(price_str)
+                        # Проверяем, что это похоже на общую сумму (больше 100₽)
+                        if price >= 100:
+                            logger.info(f"Найдена сумма заказа (fallback): {price} ₽")
+                            return price
+                    except ValueError:
+                        continue
+            
             logger.warning("Не удалось найти сумму заказа")
             return None
             
