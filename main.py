@@ -417,7 +417,7 @@ def main():
                             order_num = order.get('order_number', '?')
                             order_date = order.get('date', '?')
                             order_items = order.get('items_count', 0)
-                            order_sum = order.get('total_amount', 0)
+                            order_sum = order.get('total_amount') or 0  # Защита от None
                             
                             summary_message += f"\n{idx}. <code>{order_num}</code>"
                             summary_message += f"\n   📅 {order_date} | 📦 {order_items} шт | 💰 {order_sum:,.0f} ₽"
