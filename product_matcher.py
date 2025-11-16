@@ -422,7 +422,7 @@ def split_product_into_units(
 <b>Цена за единицу:</b> {unit_price} ₽
 <b>Последняя единица:</b> {remainder} ₽
 
-Будет добавлено <b>{num_units} строк</b> в Google Таблицу.""")
+Будет добавлено <b>{quantity * num_units} строк</b> в Google Таблицу ({quantity} упак. × {num_units} шт).""")
     
     logger.info(f"✅ Товар разбит на {num_units} единиц: {name} ({price}₽ → {num_units}x{unit_price}₽)")
     
