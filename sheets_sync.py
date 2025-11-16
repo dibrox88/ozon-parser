@@ -465,8 +465,27 @@ class SheetsSynchronizer:
                     return False
 
                 if choice == 0:
+                    # Собираем потерянные значения для этого названия
+                    lost_values = i_values_by_name.get(target_name, [])
+                    if not lost_values:
+                        # Ищем значения среди старых названий
+                        for old_name, values in i_values_by_name.items():
+                            if values:  # Есть непустые значения
+                                lost_values = values
+                                break
+                    
                     logger.info(f"Пользователь пропустил сопоставление для '{target_name}'")
-                    sync_send_message(f"⏭️ Пропущено: <code>{target_name}</code>")
+                    
+                    msg = f"⏭️ Пропущено: <code>{target_name}</code>"
+                    if lost_values:
+                        msg += f"\n\n❗ <b>Потеряно значений:</b> {len(lost_values)}"
+                        for val in lost_values[:5]:
+                            if val:
+                                msg += f"\n  • {val}"
+                        if len(lost_values) > 5:
+                            msg += f"\n  • ... ещё {len(lost_values) - 5}"
+                    
+                    sync_send_message(msg)
                     return False
 
                 if 1 <= choice <= len(candidates):

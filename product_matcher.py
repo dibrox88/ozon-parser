@@ -663,8 +663,8 @@ def match_product_interactive(
                         # Сортируем: сначала последние добавленные (из конца таблицы)
                         products_by_type = list(reversed(products_by_type))
                         
-                        # Показываем до 10 товаров
-                        products_to_show = products_by_type[:10]
+                        # Показываем до 15 товаров
+                        products_to_show = products_by_type[:15]
                         
                         product_list_msg = f"📦 <b>Товары типа '{selected_type}':</b>\n\n"
                         for idx, product in enumerate(products_to_show, start=1):
@@ -929,8 +929,8 @@ def match_product_interactive(
                     # Сортируем: сначала последние добавленные (из конца таблицы)
                     products_by_type = list(reversed(products_by_type))
                     
-                    # Показываем до 10 товаров
-                    products_to_show = products_by_type[:10]
+                    # Показываем до 15 товаров
+                    products_to_show = products_by_type[:15]
                     
                     product_list_msg = f"📦 <b>Товары типа '{selected_type}':</b>\n\n"
                     for idx, product in enumerate(products_to_show, start=1):
