@@ -49,6 +49,37 @@ class SheetsSynchronizer:
         self.spreadsheet: Optional[gspread.Spreadsheet] = None
         self.worksheet: Optional[gspread.Worksheet] = None
         self._lost_i_values: List[Dict[str, str]] = []  # Список потерянных значений колонки I
+        self.product_mappings: Dict[str, Any] = {}  # Загруженные маппинги товаров
+        self._load_product_mappings()
+    
+    def _load_product_mappings(self) -> None:
+        """Загрузить product_mappings.json для получения split_units."""
+        try:
+            with open('product_mappings.json', 'r', encoding='utf-8') as f:
+                self.product_mappings = json.load(f)
+            logger.debug(f"Загружено {len(self.product_mappings)} товаров из product_mappings.json")
+        except Exception as e:
+            logger.warning(f"Не удалось загрузить product_mappings.json: {e}")
+            self.product_mappings = {}
+    
+    def _get_split_units(self, mapped_name: str, color: str = '') -> int:
+        """
+        Получить split_units для товара.
+        
+        Args:
+            mapped_name: Название товара (mapped_name)
+            color: Цвет товара
+            
+        Returns:
+            Количество единиц в упаковке (по умолчанию 1)
+            Например, если split_units=3 и quantity=30, то будет 90 строк (30*3)
+        """
+        # Формируем ключ как в product_matcher
+        key = f"{mapped_name.lower()}|{color.lower()}" if color else mapped_name.lower()
+        
+        # Ищем товар в маппингах
+        product_info = self.product_mappings.get(key, {})
+        return product_info.get('split_units', 1)
         
     def connect(self) -> bool:
         """Подключение к Google Sheets API с правами записи."""
@@ -252,10 +283,17 @@ class SheetsSynchronizer:
                 mapped_name = item.get('mapped_name', item.get('name', ''))
                 status = self.STATUS_MAPPING.get(item.get('status', ''), item.get('status', ''))
                 quantity = item.get('quantity', 1)
+                color = item.get('color', '')
+                
+                # Получаем split_units для этого товара
+                split_units = self._get_split_units(mapped_name, color)
+                
+                # Рассчитываем ожидаемое количество строк
+                expected_rows = quantity * split_units
                 
                 key = f"{mapped_name}|{status}"
                 json_items[key] = {
-                    'quantity': quantity,
+                    'quantity': expected_rows,  # Количество строк, а не упаковок!
                     'price': item.get('price', 0),
                     'mapped_name': mapped_name,
                     'status': status
@@ -730,6 +768,13 @@ class SheetsSynchronizer:
             status = item.get('status', '')
             mapped_name = item.get('mapped_name', item.get('name', ''))
             mapped_type = item.get('mapped_type', '')
+            color = item.get('color', '')
+            
+            # Получаем split_units для этого товара
+            split_units = self._get_split_units(mapped_name, color)
+            
+            # Рассчитываем реальное количество строк
+            actual_rows = quantity * split_units
             
             # Проверяем, является ли товар разбитым на единицы
             is_split = item.get('is_split', False)
@@ -746,8 +791,8 @@ class SheetsSynchronizer:
                 }
                 split_info = json.dumps(split_data, ensure_ascii=False)
             
-            # Создаём quantity дубликатов строк
-            for _ in range(quantity):
+            # Создаём actual_rows дубликатов строк (учитываем split_units)
+            for _ in range(actual_rows):
                 row = [
                     date,                                      # A: дата
                     order_number,                              # B: order_number
