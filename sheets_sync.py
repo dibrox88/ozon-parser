@@ -1069,8 +1069,11 @@ class SheetsSynchronizer:
                             if len(comparison['changes']) > 5:
                                 changes_text += f"\n  • ... ещё {len(comparison['changes']) - 5} изменений"
                             
+                            # Создаем ссылку на заказ
+                            order_link = f"https://www.ozon.ru/my/orderdetails?orderId={order_number}"
+                            
                             sync_send_message(
-                                f"⚠️ <b>Изменения в заказе {order_number}:</b>\n{changes_text}\n\n"
+                                f"⚠️ <b>Изменения в заказе <a href='{order_link}'>{order_number}</a>:</b>\n{changes_text}\n\n"
                                 f"🔄 Обновляем данные..."
                             )
                             
