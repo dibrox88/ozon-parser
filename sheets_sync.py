@@ -10,7 +10,7 @@ from loguru import logger
 from typing import List, Dict, Optional, Any, cast
 from config import Config
 from notifier import sync_send_message, sync_wait_for_input
-import difflib
+import time
 
 
 class SheetsSynchronizer:
@@ -48,6 +48,7 @@ class SheetsSynchronizer:
         self.client: Optional[gspread.Client] = None
         self.spreadsheet: Optional[gspread.Spreadsheet] = None
         self.worksheet: Optional[gspread.Worksheet] = None
+        self._lost_i_values: List[Dict[str, str]] = []  # Список потерянных значений колонки I
         
     def connect(self) -> bool:
         """Подключение к Google Sheets API с правами записи."""
@@ -421,16 +422,28 @@ class SheetsSynchronizer:
                 if not existing_names:
                     return False
 
-                # Ищем похожие варианты
-                candidates = difflib.get_close_matches(target_name, existing_names, n=5, cutoff=0.6)
+                # Показываем ВСЕ доступные варианты (без автоматического фильтра)
+                candidates = [name for name in existing_names if i_values_by_name.get(name)]
                 if not candidates:
                     return False
 
                 # Формируем сообщение с вариантами
-                msg = f"⚠️ Найдены похожие названия для '{target_name}':\n\n"
-                for i, c in enumerate(candidates, 1):
-                    msg += f"{i}. {c}\n"
-                msg += "\n0. Пропустить (оставить I пустым)\n\nВыберите номер (0-" + str(len(candidates)) + "):" 
+                msg = f"🔄 <b>Сопоставление колонки I</b>\n\n"
+                msg += f"📦 Новое название: <code>{target_name}</code>\n\n"
+                msg += f"Доступные старые названия (со значениями I):\n"
+                
+                # Показываем первые 15 вариантов
+                display_count = min(15, len(candidates))
+                for i in range(display_count):
+                    c = candidates[i]
+                    count = len(i_values_by_name.get(c, []))
+                    msg += f"{i+1}. <code>{c}</code> ({count} знач.)\n"
+                
+                if len(candidates) > display_count:
+                    msg += f"... ещё {len(candidates) - display_count} вариантов\n"
+                
+                msg += f"\n0. Пропустить (оставить I пустым)\n\n"
+                msg += f"💬 Выберите номер (0-{len(candidates)}):" 
 
                 # Отправляем промпт и ждём ответа
                 try:
@@ -448,10 +461,12 @@ class SheetsSynchronizer:
                     choice = int(response.strip())
                 except ValueError:
                     logger.info(f"Неверный ответ при сопоставлении '{target_name}': {response}")
+                    sync_send_message(f"❌ Ожидается число от 0 до {len(candidates)}")
                     return False
 
                 if choice == 0:
                     logger.info(f"Пользователь пропустил сопоставление для '{target_name}'")
+                    sync_send_message(f"⏭️ Пропущено: <code>{target_name}</code>")
                     return False
 
                 if 1 <= choice <= len(candidates):
@@ -459,8 +474,11 @@ class SheetsSynchronizer:
                     # Переносим старые I значения под новое имя
                     i_values_by_name[target_name] = list(i_values_by_name.get(chosen, []))
                     logger.info(f"Сопоставлено '{target_name}' -> '{chosen}' и восстановлены {len(i_values_by_name[target_name])} значений I")
+                    sync_send_message(f"✅ Сопоставлено: <code>{target_name}</code> → <code>{chosen}</code> ({len(i_values_by_name[target_name])} знач.)")
                     return True
-
+                
+                # Неверный номер
+                sync_send_message(f"❌ Неверный номер: {choice}")
                 return False
 
             # ЭТАП 1: Заполняем строки где D="TRUE" (получен)
@@ -539,6 +557,27 @@ class SheetsSynchronizer:
             i_range = f"I{start_row}:I{start_row + new_row_count - 1}"
             self.worksheet.update(range_name=i_range, values=i_values, value_input_option='USER_ENTERED')  # type: ignore[arg-type]
             logger.info(f"   ✅ Восстановлена колонка I (сопоставлено по названию товара)")
+            
+            # Собираем потерянные значения колонки I (которые не были восстановлены)
+            lost_i_values = []
+            for old_name, values in i_values_by_name.items():
+                used_count = name_counters.get(old_name, 0)
+                if used_count < len(values):
+                    # Есть неиспользованные значения
+                    unused = values[used_count:]
+                    for val in unused:
+                        if val:  # Только непустые
+                            lost_i_values.append({
+                                'old_name': old_name,
+                                'value': val
+                            })
+                            logger.warning(f"❗ Потеряно значение I: {old_name} = {val}")
+            
+            # Сохраняем информацию о потерянных значениях для отчета
+            if lost_i_values:
+                if not hasattr(self, '_lost_i_values'):
+                    self._lost_i_values = []
+                self._lost_i_values.extend(lost_i_values)
             
             # КРИТИЧНО: Очищаем границы ПОСЛЕ записи данных, но ПЕРЕД добавлением новых границ
             # Иначе новые вставленные строки будут иметь старые границы
@@ -1089,10 +1128,28 @@ class SheetsSynchronizer:
                     summary_parts.append(f"➕ <b>Добавлено:</b> {len(new_orders)}")
                     summary_parts.append(f"📝 <b>Записано строк:</b> {len(all_rows)}")
                     
+                    # Добавляем отчет о потерянных значениях колонки I
+                    if hasattr(self, '_lost_i_values') and self._lost_i_values:
+                        summary_parts.append(f"\n❗ <b>Потеряно значений колонки I:</b> {len(self._lost_i_values)}")
+                        for item in self._lost_i_values[:5]:  # Первые 5
+                            summary_parts.append(f"  • <code>{item['old_name']}</code>: {item['value']}")
+                        if len(self._lost_i_values) > 5:
+                            summary_parts.append(f"  • ... ещё {len(self._lost_i_values) - 5}")
+                    
                     sync_send_message("✅ " + "\n".join(summary_parts))
             elif updated_orders:
                 # Были только обновления, без добавления новых
-                sync_send_message(f"✅ <b>Обновлено заказов:</b> {len(updated_orders)}")
+                summary_msg = f"✅ <b>Обновлено заказов:</b> {len(updated_orders)}"
+                
+                # Добавляем отчет о потерянных значениях колонки I
+                if hasattr(self, '_lost_i_values') and self._lost_i_values:
+                    summary_msg += f"\n\n❗ <b>Потеряно значений колонки I:</b> {len(self._lost_i_values)}"
+                    for item in self._lost_i_values[:5]:  # Первые 5
+                        summary_msg += f"\n  • <code>{item['old_name']}</code>: {item['value']}"
+                    if len(self._lost_i_values) > 5:
+                        summary_msg += f"\n  • ... ещё {len(self._lost_i_values) - 5}"
+                
+                sync_send_message(summary_msg)
             
             return True
             
