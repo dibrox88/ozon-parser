@@ -183,6 +183,7 @@ class SheetsSynchronizer:
     def get_order_data(self, order_number: str) -> Dict[str, Any]:
         """
         Получить полные данные существующего заказа из Google Sheets.
+        ВАЖНО: Собирает ВСЕ строки с данным order_number, даже если они разбросаны по таблице.
         
         Args:
             order_number: Номер заказа
@@ -191,8 +192,9 @@ class SheetsSynchronizer:
             Словарь с данными заказа: {
                 'order_number': str,
                 'rows': List[Dict],  # Список строк с данными
-                'start_row': int,    # Номер первой строки в таблице
-                'end_row': int       # Номер последней строки
+                'row_numbers': List[int],  # Номера строк в таблице (могут быть разбросаны!)
+                'start_row': int,    # Номер первой строки (для совместимости)
+                'end_row': int       # Номер последней строки (для совместимости)
             }
         """
         try:
@@ -203,8 +205,7 @@ class SheetsSynchronizer:
             all_data = self.worksheet.get_all_values()
             
             order_rows = []
-            start_row = None
-            end_row = None
+            row_numbers = []  # НОВОЕ: список всех номеров строк с этим заказом
             
             for idx, row in enumerate(all_data, start=1):
                 # Пропускаем пустые строки
@@ -213,10 +214,7 @@ class SheetsSynchronizer:
                 
                 # Проверяем столбец B (order_number)
                 if len(row) > 1 and str(row[1]) == str(order_number):
-                    if start_row is None:
-                        start_row = idx
-                    
-                    end_row = idx
+                    row_numbers.append(idx)
                     
                     # Сохраняем данные строки
                     order_rows.append({
@@ -236,14 +234,21 @@ class SheetsSynchronizer:
                 logger.debug(f"Заказ {order_number} не найден в таблице")
                 return {}
             
-            logger.debug(f"Найден заказ {order_number}: {len(order_rows)} строк (строки {start_row}-{end_row})")
+            # Проверяем, идут ли строки подряд
+            is_continuous = all(row_numbers[i] == row_numbers[i-1] + 1 for i in range(1, len(row_numbers)))
+            if not is_continuous:
+                logger.warning(f"⚠️ Заказ {order_number}: строки разбросаны по таблице: {row_numbers}")
+            
+            logger.debug(f"Найден заказ {order_number}: {len(order_rows)} строк (строки {row_numbers[0]}-{row_numbers[-1]})")
             
             return {
                 'order_number': order_number,
                 'rows': order_rows,
-                'start_row': start_row,
-                'end_row': end_row,
-                'total_rows': len(order_rows)
+                'row_numbers': row_numbers,  # НОВОЕ: все номера строк
+                'start_row': row_numbers[0] if row_numbers else None,
+                'end_row': row_numbers[-1] if row_numbers else None,
+                'total_rows': len(order_rows),
+                'is_continuous': is_continuous  # НОВОЕ: флаг, идут ли строки подряд
             }
             
         except Exception as e:
@@ -283,12 +288,14 @@ class SheetsSynchronizer:
                 mapped_name = item.get('mapped_name', item.get('name', ''))
                 status = self.STATUS_MAPPING.get(item.get('status', ''), item.get('status', ''))
                 quantity = item.get('quantity', 1)
-                color = item.get('color', '')
                 
-                # Получаем split_units для этого товара
-                split_units = self._get_split_units(mapped_name, color)
+                # Получаем split_units из item (если есть) или из product_mappings.json
+                split_units = item.get('split_units')
+                if not split_units:
+                    color = item.get('color', '')
+                    split_units = self._get_split_units(mapped_name, color)
                 
-                # Рассчитываем ожидаемое количество строк
+                # Рассчитываем ожидаемое количество строк: quantity × split_units
                 expected_rows = quantity * split_units
                 
                 key = f"{mapped_name}|{status}"
@@ -374,172 +381,135 @@ class SheetsSynchronizer:
                 return False
             
             order_number = order.get('order_number', '')
-            start_row = sheets_data.get('start_row')
+            row_numbers = sheets_data.get('row_numbers', [])
             old_row_count = sheets_data.get('total_rows', 0)
+            is_continuous = sheets_data.get('is_continuous', True)
             
-            if start_row is None:
-                logger.error(f"❌ Не указана начальная строка для заказа {order_number}")
+            if not row_numbers:
+                logger.error(f"❌ Не найдены строки для заказа {order_number}")
                 return False
             
-            logger.info(f"🔄 Обновление заказа {order_number} (строки {start_row}-{start_row + old_row_count - 1})")
+            start_row = row_numbers[0]
+            
+            # Находим ВСЕ непрерывные блоки
+            blocks = []
+            current_block = [row_numbers[0]]
+            
+            for i in range(1, len(row_numbers)):
+                if row_numbers[i] == current_block[-1] + 1:
+                    current_block.append(row_numbers[i])
+                else:
+                    # Блок закончился, сохраняем его
+                    blocks.append(current_block)
+                    # Начинаем новый блок
+                    current_block = [row_numbers[i]]
+            # Добавляем последний блок
+            blocks.append(current_block)
+            
+            # Выбираем САМЫЙ БОЛЬШОЙ непрерывный блок как основной
+            continuous_block = max(blocks, key=len)
+            
+            # Всё остальное - разбросанные строки (включая другие непрерывные блоки - дубликаты!)
+            scattered_rows = [r for r in row_numbers if r not in continuous_block]
+            
+            if scattered_rows:
+                if len(blocks) > 1:
+                    logger.warning(f"⚠️ Обновление заказа {order_number}: найдено {len(blocks)} непрерывных блоков! Основной блок {continuous_block[0]}-{continuous_block[-1]} ({len(continuous_block)} строк), дубликаты/разбросанные: {scattered_rows}")
+                else:
+                    logger.warning(f"⚠️ Обновление заказа {order_number}: непрерывный блок {continuous_block[0]}-{continuous_block[-1]}, разбросаны: {scattered_rows}")
+            else:
+                logger.info(f"🔄 Обновление заказа {order_number} (строки {start_row}-{row_numbers[-1]}, блок)")
             
             # Подготавливаем новые данные
             new_rows = self.prepare_rows_from_order(order)
             new_rows = self.group_and_sort_rows(new_rows)
             new_row_count = len(new_rows)
             
-            logger.info(f"   Старых строк: {old_row_count}, новых строк: {new_row_count}")
+            logger.info(f"   Старых строк: {old_row_count} (непрерывных: {len(continuous_block)}, разбросанных: {len(scattered_rows)}), новых строк: {new_row_count}")
             
-            # КРИТИЧНО: Сохраняем данные из колонки I ПЕРЕД любыми изменениями
-            # Сохраняем по ключу (mapped_name, status) для точного сопоставления
-            column_i_mapping = {}
+            # КРИТИЧНО: Сохраняем данные из колонок I-P (8 колонок) ПЕРЕД любыми изменениями
+            columns_i_p_mapping = {}  # {"name|status": [[i,j,k,l,m,n,o,p], ...]}
             if old_row_count > 0:
                 try:
-                    # Читаем все данные старого диапазона (A-I)
-                    old_range = f"A{start_row}:I{start_row + old_row_count - 1}"
+                    # Читаем непрерывный блок диапазоном (A-P, колонки 0-15)
+                    old_range = f"A{continuous_block[0]}:P{continuous_block[-1]}"
                     old_data = self.worksheet.get(old_range)
                     
+                    # Если есть разбросанные - читаем их отдельно
+                    if scattered_rows:
+                        for row_num in scattered_rows:
+                            row_range = f"A{row_num}:P{row_num}"
+                            row_data = self.worksheet.get(row_range)
+                            if row_data:
+                                old_data.extend(row_data)
+                    
                     for row in old_data:
-                        if len(row) > 8 and row[8]:  # Если есть значение в колонке I
+                        # Проверяем есть ли хоть одно значение в колонках I-P (индексы 8-15)
+                        has_data = any(len(row) > i and row[i] for i in range(8, 16))
+                        if has_data:
                             mapped_name = row[6] if len(row) > 6 else ''  # G: mapped_name
                             status = row[3] if len(row) > 3 else ''       # D: status
                             key = f"{mapped_name}|{status}"
                             
-                            # Сохраняем значение I для каждого уникального товара
-                            if key not in column_i_mapping:
-                                column_i_mapping[key] = []
-                            column_i_mapping[key].append(row[8])
+                            # Сохраняем значения I-P (8 колонок) для каждого уникального товара
+                            if key not in columns_i_p_mapping:
+                                columns_i_p_mapping[key] = []
+                            # Извлекаем колонки I-P (индексы 8-15)
+                            i_p_values = [row[i] if len(row) > i else '' for i in range(8, 16)]
+                            columns_i_p_mapping[key].append(i_p_values)
                     
-                    logger.info(f"   💾 Сохранено {len(column_i_mapping)} уникальных значений из колонки I")
+                    logger.info(f"   💾 Сохранено {len(columns_i_p_mapping)} уникальных значений из колонок I-P")
                 except Exception as e:
-                    logger.warning(f"   ⚠️ Не удалось прочитать колонку I: {e}")
+                    logger.warning(f"   ⚠️ Не удалось прочитать колонки I-P: {e}")
             
-            # Корректируем количество строк
-            if new_row_count > old_row_count:
-                # Нужно добавить строки В КОНЕЦ диапазона
-                rows_to_add = new_row_count - old_row_count
-                logger.info(f"   ➕ Добавление {rows_to_add} строк в конец диапазона")
-                insert_position = start_row + old_row_count
+            # НОВАЯ ЛОГИКА: Удаляем только РАЗБРОСАННЫЕ строки (начиная с конца)
+            if scattered_rows:
+                logger.info(f"   🗑️ Удаление {len(scattered_rows)} разбросанных строк...")
+                for row_num in sorted(scattered_rows, reverse=True):
+                    self.worksheet.delete_rows(row_num)
+            
+            # Обновляем/добавляем строки в непрерывном блоке
+            continuous_count = len(continuous_block)
+            
+            if new_row_count > continuous_count:
+                # Нужно добавить строки
+                rows_to_add = new_row_count - continuous_count
+                insert_position = continuous_block[-1] + 1
+                logger.info(f"   ➕ Вставка {rows_to_add} новых строк после строки {continuous_block[-1]}...")
                 for _ in range(rows_to_add):
                     self.worksheet.insert_row([], index=insert_position)
-                
-            elif new_row_count < old_row_count:
-                # Нужно удалить строки с конца
-                rows_to_delete = old_row_count - new_row_count
-                logger.info(f"   ➖ Удаление {rows_to_delete} строк с конца")
-                delete_start = start_row + new_row_count
+            elif new_row_count < continuous_count:
+                # Нужно удалить лишние строки
+                rows_to_delete = continuous_count - new_row_count
+                logger.info(f"   🗑️ Удаление {rows_to_delete} лишних строк из блока...")
                 for _ in range(rows_to_delete):
-                    self.worksheet.delete_rows(delete_start)
+                    self.worksheet.delete_rows(continuous_block[-1])
+                    continuous_block.pop()
             
-            # Добавляем формулы SUM с учетом финального количества строк
-            new_rows = self.add_sum_formulas(new_rows, start_row)
+            # Позиция для записи данных - начало непрерывного блока
+            insert_position = continuous_block[0]
+            logger.info(f"   📝 Обновление {new_row_count} строк начиная с позиции {insert_position}...")
             
-            # Восстанавливаем данные из колонки I в новые строки
+            # Добавляем формулы SUM с учетом нового расположения
+            new_rows = self.add_sum_formulas(new_rows, insert_position)
+            
+            # Восстанавливаем данные из колонок I-P в новые строки
             # ПОРЯДОК: Сначала D="TRUE", потом D="FALSE" и остальные
             # Сопоставление ТОЛЬКО по G (mapped_name), НЕ по статусу
             
-            # Группируем старые значения I ТОЛЬКО по G (mapped_name)
-            i_values_by_name = {}
-            for key, values in column_i_mapping.items():
+            # Группируем старые значения I-P ТОЛЬКО по G (mapped_name)
+            i_p_values_by_name = {}
+            for key, values_list in columns_i_p_mapping.items():
                 mapped_name = key.split('|')[0]  # Берем только название, без статуса
-                if mapped_name not in i_values_by_name:
-                    i_values_by_name[mapped_name] = []
-                i_values_by_name[mapped_name].extend(values)
+                if mapped_name not in i_p_values_by_name:
+                    i_p_values_by_name[mapped_name] = []
+                i_p_values_by_name[mapped_name].extend(values_list)
             
             # Счетчик для каждого названия товара
             name_counters = {}
-
-            # Интерактивное сопоставление для новых названий, которых нет в старых данных
-            existing_names = list(i_values_by_name.keys())
-
-            # Функция для попытки интерактивного сопоставления через бота
-            def try_interactive_mapping(target_name: str) -> bool:
-                """Попытаться сопоставить target_name с существующими именами через Telegram.
-                Возвращает True, если сопоставление выполнено, False в противном случае.
-                """
-                if not existing_names:
-                    return False
-
-                # Показываем ВСЕ доступные варианты (без автоматического фильтра)
-                candidates = [name for name in existing_names if i_values_by_name.get(name)]
-                if not candidates:
-                    return False
-
-                # Формируем сообщение с вариантами
-                msg = f"🔄 <b>Сопоставление колонки I</b>\n\n"
-                msg += f"📦 Новое название: <code>{target_name}</code>\n\n"
-                msg += f"Доступные старые названия (со значениями I):\n"
-                
-                # Показываем первые 15 вариантов
-                display_count = min(15, len(candidates))
-                for i in range(display_count):
-                    c = candidates[i]
-                    count = len(i_values_by_name.get(c, []))
-                    msg += f"{i+1}. <code>{c}</code> ({count} знач.)\n"
-                
-                if len(candidates) > display_count:
-                    msg += f"... ещё {len(candidates) - display_count} вариантов\n"
-                
-                msg += f"\n0. Пропустить (оставить I пустым)\n\n"
-                msg += f"💬 Выберите номер (0-{len(candidates)}):" 
-
-                # Отправляем промпт и ждём ответа
-                try:
-                    response = sync_wait_for_input(msg, timeout=300)
-                except Exception as e:
-                    logger.warning(f"Не удалось запросить сопоставление для '{target_name}': {e}")
-                    return False
-
-                if not response:
-                    logger.info(f"Сопоставление для '{target_name}' не выполнено (нет ответа)")
-                    return False
-
-                # Разбираем ответ
-                try:
-                    choice = int(response.strip())
-                except ValueError:
-                    logger.info(f"Неверный ответ при сопоставлении '{target_name}': {response}")
-                    sync_send_message(f"❌ Ожидается число от 0 до {len(candidates)}")
-                    return False
-
-                if choice == 0:
-                    # Собираем потерянные значения для этого названия
-                    lost_values = i_values_by_name.get(target_name, [])
-                    if not lost_values:
-                        # Ищем значения среди старых названий
-                        for old_name, values in i_values_by_name.items():
-                            if values:  # Есть непустые значения
-                                lost_values = values
-                                break
-                    
-                    logger.info(f"Пользователь пропустил сопоставление для '{target_name}'")
-                    
-                    msg = f"⏭️ Пропущено: <code>{target_name}</code>"
-                    if lost_values:
-                        msg += f"\n\n❗ <b>Потеряно значений:</b> {len(lost_values)}"
-                        for val in lost_values[:5]:
-                            if val:
-                                msg += f"\n  • {val}"
-                        if len(lost_values) > 5:
-                            msg += f"\n  • ... ещё {len(lost_values) - 5}"
-                    
-                    sync_send_message(msg)
-                    return False
-
-                if 1 <= choice <= len(candidates):
-                    chosen = candidates[choice - 1]
-                    # Переносим старые I значения под новое имя
-                    i_values_by_name[target_name] = list(i_values_by_name.get(chosen, []))
-                    logger.info(f"Сопоставлено '{target_name}' -> '{chosen}' и восстановлены {len(i_values_by_name[target_name])} значений I")
-                    sync_send_message(f"✅ Сопоставлено: <code>{target_name}</code> → <code>{chosen}</code> ({len(i_values_by_name[target_name])} знач.)")
-                    return True
-                
-                # Неверный номер
-                sync_send_message(f"❌ Неверный номер: {choice}")
-                return False
-
+            
             # ЭТАП 1: Заполняем строки где D="TRUE" (получен)
-            for row in new_rows:
+            for idx, row in enumerate(new_rows):
                 mapped_name = row[6] if len(row) > 6 else ''  # G: mapped_name
                 status = row[3] if len(row) > 3 else ''       # D: status
 
@@ -548,29 +518,23 @@ class SheetsSynchronizer:
                     if mapped_name not in name_counters:
                         name_counters[mapped_name] = 0
 
-                    # Если нет известных значений для этого названия,
-                    # попробуем интерактивно сопоставить их с существующими
-                    if mapped_name and mapped_name not in i_values_by_name:
-                        mapped = try_interactive_mapping(mapped_name)
-                        if not mapped:
-                            logger.warning(f"⚠️ Не найдено соответствий для '{mapped_name}' (D=TRUE), оставляем I пустым")
-
-                    # Восстанавливаем значение I по названию товара (G)
-                    i_value = ""
-                    if mapped_name in i_values_by_name and name_counters[mapped_name] < len(i_values_by_name[mapped_name]):
-                        i_value = i_values_by_name[mapped_name][name_counters[mapped_name]]
+                    # Восстанавливаем значения I-P по названию товара (G)
+                    i_p_vals = [""] * 8  # 8 пустых колонок по умолчанию
+                    if mapped_name in i_p_values_by_name and name_counters[mapped_name] < len(i_p_values_by_name[mapped_name]):
+                        i_p_vals = i_p_values_by_name[mapped_name][name_counters[mapped_name]]
                         name_counters[mapped_name] += 1
 
-                    # Добавляем значение I в строку
-                    if len(row) > 8:
-                        row[8] = i_value
-                    else:
-                        while len(row) < 8:
-                            row.append("")
-                        row.append(i_value)
+                    # Добавляем значения I-P в строку (индексы 8-15)
+                    while len(row) < 8:
+                        row.append("")
+                    # Удаляем старые значения I-P если есть
+                    row = row[:8]
+                    # Добавляем новые/восстановленные значения I-P
+                    row.extend(i_p_vals)
+                    new_rows[idx] = row
 
             # ЭТАП 2: Заполняем строки где D!="TRUE" (FALSE, в пути, отменен и т.д.)
-            for row in new_rows:
+            for idx, row in enumerate(new_rows):
                 mapped_name = row[6] if len(row) > 6 else ''  # G: mapped_name
                 status = row[3] if len(row) > 3 else ''       # D: status
 
@@ -579,62 +543,71 @@ class SheetsSynchronizer:
                     if mapped_name not in name_counters:
                         name_counters[mapped_name] = 0
 
-                    # Если нет известных значений для этого названия,
-                    # попробуем интерактивно сопоставить их с существующими
-                    if mapped_name and mapped_name not in i_values_by_name:
-                        mapped = try_interactive_mapping(mapped_name)
-                        if not mapped:
-                            logger.warning(f"⚠️ Не найдено соответствий для '{mapped_name}' (D!=TRUE), оставляем I пустым")
-
-                    # Восстанавливаем значение I по названию товара (G)
-                    i_value = ""
-                    if mapped_name in i_values_by_name and name_counters[mapped_name] < len(i_values_by_name[mapped_name]):
-                        i_value = i_values_by_name[mapped_name][name_counters[mapped_name]]
+                    # Восстанавливаем значения I-P по названию товара (G)
+                    i_p_vals = [""] * 8  # 8 пустых колонок по умолчанию
+                    if mapped_name in i_p_values_by_name and name_counters[mapped_name] < len(i_p_values_by_name[mapped_name]):
+                        i_p_vals = i_p_values_by_name[mapped_name][name_counters[mapped_name]]
                         name_counters[mapped_name] += 1
 
-                    # Добавляем значение I в строку
-                    if len(row) > 8:
-                        row[8] = i_value
-                    else:
-                        while len(row) < 8:
-                            row.append("")
-                        row.append(i_value)
+                    # Добавляем значения I-P в строку (индексы 8-15)
+                    while len(row) < 8:
+                        row.append("")
+                    # Удаляем старые значения I-P если есть
+                    row = row[:8]
+                    # Добавляем новые/восстановленные значения I-P
+                    row.extend(i_p_vals)
+                    new_rows[idx] = row
             
-            # Записываем новые данные (только A-H, НЕ трогаем I)
-            # Разбиваем данные: отдельно A-H и отдельно I
-            rows_without_i = [row[:8] for row in new_rows]  # Только A-H
+            # Записываем новые данные (только A-H, НЕ трогаем I-P)
+            # Разбиваем данные: отдельно A-H и отдельно I-P
+            rows_without_i_p = [row[:8] for row in new_rows]  # Только A-H
             
             # Обновляем A-H
-            range_a_h = f"A{start_row}:H{start_row + new_row_count - 1}"
-            self.worksheet.update(range_name=range_a_h, values=rows_without_i, value_input_option='USER_ENTERED')  # type: ignore[arg-type]
+            range_a_h = f"A{insert_position}:H{insert_position + new_row_count - 1}"
+            self.worksheet.update(range_name=range_a_h, values=rows_without_i_p, value_input_option='USER_ENTERED')  # type: ignore[arg-type]
             logger.info(f"   ✅ Записано {new_row_count} строк (A-H)")
             
-            # Восстанавливаем колонку I
-            i_values = [[row[8] if len(row) > 8 else ""] for row in new_rows]
-            i_range = f"I{start_row}:I{start_row + new_row_count - 1}"
-            self.worksheet.update(range_name=i_range, values=i_values, value_input_option='USER_ENTERED')  # type: ignore[arg-type]
-            logger.info(f"   ✅ Восстановлена колонка I (сопоставлено по названию товара)")
+            # Восстанавливаем колонки I-P (8 колонок)
+            # Для каждой строки извлекаем значения I-P (индексы 8-15)
+            i_p_values = []
+            for row in new_rows:
+                row_i_p = []
+                for i in range(8, 16):  # Колонки I-P (индексы 8-15)
+                    if len(row) > i:
+                        val = row[i]
+                        # Заменяем FALSE на пустую строку для checkbox
+                        if val == 'FALSE':
+                            val = ''
+                        row_i_p.append(val)
+                    else:
+                        row_i_p.append("")
+                i_p_values.append(row_i_p)
             
-            # Собираем потерянные значения колонки I (которые не были восстановлены)
-            lost_i_values = []
-            for old_name, values in i_values_by_name.items():
+            i_p_range = f"I{insert_position}:P{insert_position + new_row_count - 1}"
+            self.worksheet.update(range_name=i_p_range, values=i_p_values, value_input_option='USER_ENTERED')  # type: ignore[arg-type]
+            logger.info(f"   ✅ Восстановлены колонки I-P (сопоставлено по названию товара)")
+            
+            # Собираем потерянные значения колонок I-P (которые не были восстановлены)
+            lost_i_p_values = []
+            for old_name, values_list in i_p_values_by_name.items():
                 used_count = name_counters.get(old_name, 0)
-                if used_count < len(values):
+                if used_count < len(values_list):
                     # Есть неиспользованные значения
-                    unused = values[used_count:]
-                    for val in unused:
-                        if val:  # Только непустые
-                            lost_i_values.append({
+                    unused = values_list[used_count:]
+                    for val_list in unused:
+                        # Проверяем есть ли хоть одно непустое значение
+                        if any(v for v in val_list):
+                            lost_i_p_values.append({
                                 'old_name': old_name,
-                                'value': val
+                                'values': val_list
                             })
-                            logger.warning(f"❗ Потеряно значение I: {old_name} = {val}")
+                            logger.warning(f"❗ Потеряны значения I-P: {old_name} = {val_list}")
             
             # Сохраняем информацию о потерянных значениях для отчета
-            if lost_i_values:
-                if not hasattr(self, '_lost_i_values'):
-                    self._lost_i_values = []
-                self._lost_i_values.extend(lost_i_values)
+            if lost_i_p_values:
+                if not hasattr(self, '_lost_i_p_values'):
+                    self._lost_i_p_values = []
+                self._lost_i_p_values.extend(lost_i_p_values)
             
             # КРИТИЧНО: Очищаем границы ПОСЛЕ записи данных, но ПЕРЕД добавлением новых границ
             # Иначе новые вставленные строки будут иметь старые границы
@@ -652,74 +625,15 @@ class SheetsSynchronizer:
     
     def sync_split_items_status(self, order: Dict) -> None:
         """
-        Синхронизировать статусы для разбитых товаров.
-        Если товар разбит на несколько единиц (is_split=True), 
-        все единицы должны иметь одинаковый статус.
+        УСТАРЕВШАЯ ФУНКЦИЯ: больше не используется.
+        Синхронизация статусов не требуется, так как split_units применяется 
+        только при создании строк в Google Sheets, а не в JSON.
         
         Args:
             order: Данные заказа из JSON
         """
-        try:
-            if not order.get('items'):
-                return
-            
-            order_number = order.get('order_number', '')
-            
-            # Группируем разбитые товары по (name, order_number, split_total)
-            split_groups = {}
-            
-            for item in order['items']:
-                if not item.get('is_split'):
-                    continue
-                
-                name = item.get('mapped_name', item.get('name', ''))
-                split_total = item.get('split_total', 0)
-                status = item.get('status', '')
-                
-                # Ключ группы: имя товара + номер заказа + общее количество единиц
-                group_key = f"{name}|{order_number}|{split_total}"
-                
-                if group_key not in split_groups:
-                    split_groups[group_key] = {
-                        'name': name,
-                        'split_total': split_total,
-                        'statuses': [],
-                        'items': []
-                    }
-                
-                split_groups[group_key]['statuses'].append(status)
-                split_groups[group_key]['items'].append(item)
-            
-            # Проверяем каждую группу на несоответствие статусов
-            for group_key, group_data in split_groups.items():
-                statuses = group_data['statuses']
-                
-                # Если все статусы одинаковые - ничего не делаем
-                if len(set(statuses)) == 1:
-                    continue
-                
-                # Если статусы различаются - выбираем приоритетный
-                # Приоритет: получен > в пункте выдачи > отменён > забрать
-                priority_status = self._get_priority_status(statuses)
-                
-                logger.warning(
-                    f"⚠️ Разбитый товар '{group_data['name']}' имеет разные статусы: {set(statuses)}"
-                )
-                logger.info(f"🔄 Синхронизация статуса на: '{priority_status}'")
-                
-                # Обновляем статусы всех единиц в группе
-                for item in group_data['items']:
-                    item['status'] = priority_status
-                
-                sync_send_message(
-                    f"🔄 <b>Синхронизация статусов</b>\n"
-                    f"Товар: {group_data['name']}\n"
-                    f"Единиц: {group_data['split_total']}\n"
-                    f"Новый статус: {priority_status}"
-                )
-                
-        except Exception as e:
-            logger.error(f"❌ Ошибка синхронизации статусов разбитых товаров: {e}")
+        # Функция оставлена для обратной совместимости, но ничего не делает
+        pass
     
     def _get_priority_status(self, statuses: List[str]) -> str:
         """
@@ -768,30 +682,21 @@ class SheetsSynchronizer:
             status = item.get('status', '')
             mapped_name = item.get('mapped_name', item.get('name', ''))
             mapped_type = item.get('mapped_type', '')
-            color = item.get('color', '')
             
-            # Получаем split_units для этого товара
-            split_units = self._get_split_units(mapped_name, color)
+            # Получаем split_units из item (если product_matcher добавил его)
+            # Если нет - пробуем загрузить из product_mappings.json
+            split_units = item.get('split_units')
+            if not split_units:
+                color = item.get('color', '')
+                split_units = self._get_split_units(mapped_name, color)
             
-            # Рассчитываем реальное количество строк
+            # Рассчитываем реальное количество строк: quantity × split_units
             actual_rows = quantity * split_units
             
-            # Проверяем, является ли товар разбитым на единицы
-            is_split = item.get('is_split', False)
-            split_index = item.get('split_index', '')
-            split_total = item.get('split_total', '')
+            # Рассчитываем цену за единицу (делим на split_units)
+            unit_price = round(price / split_units, 2) if split_units > 1 else price
             
-            # Формируем JSON для столбца Q с информацией о разбивке
-            split_info = ""
-            if is_split and split_index and split_total:
-                split_data = {
-                    'is_split': True,
-                    'split_index': split_index,
-                    'split_total': split_total
-                }
-                split_info = json.dumps(split_data, ensure_ascii=False)
-            
-            # Создаём actual_rows дубликатов строк (учитываем split_units)
+            # Создаём actual_rows дубликатов строк
             for _ in range(actual_rows):
                 row = [
                     date,                                      # A: дата
@@ -799,14 +704,13 @@ class SheetsSynchronizer:
                     "Озон",                                    # C: всегда "Озон"
                     self.STATUS_MAPPING.get(status, status),  # D: status
                     "",                                        # E: формула (добавим позже)
-                    price,                                     # F: price
+                    unit_price,                                # F: price (делим на split_units)
                     mapped_name,                               # G: mapped_name
                     mapped_type,                               # H: mapped_type
-                    "",                                        # I: пустой (резерв)
+                    "",                                        # I: пустой (резерв для артикулов)
                     "", "", "", "", "",                        # J-N: пустые столбцы
                     "",                                        # O: пустой
-                    "",                                        # P: пустой
-                    split_info                                 # Q: split info (JSON)
+                    ""                                         # P: пустой
                 ]
                 rows.append(row)
         
@@ -1115,7 +1019,7 @@ class SheetsSynchronizer:
                                 changes_text += f"\n  • ... ещё {len(comparison['changes']) - 5} изменений"
                             
                             # Создаем ссылку на заказ
-                            order_link = f"https://www.ozon.ru/my/orderdetails?orderId={order_number}"
+                            order_link = f"https://www.ozon.ru/my/orderdetails/?order={order_number}"
                             
                             sync_send_message(
                                 f"⚠️ <b>Изменения в заказе <a href='{order_link}'>{order_number}</a>:</b>\n{changes_text}\n\n"

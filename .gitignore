@@ -43,3 +43,7 @@ product_mappings.json
 *.tar.gz
 *.backup
 
+# WB Data
+wb.html
+wb_products.csv
+

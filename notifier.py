@@ -85,7 +85,7 @@ class TelegramNotifier:
     async def wait_for_user_input(
         self, 
         prompt: str, 
-        timeout: int = 300, 
+        timeout: int = 0, 
         options: Optional[List[Tuple[str, str]]] = None
     ) -> Optional[str]:
         """
@@ -202,7 +202,7 @@ def sync_send_photo(photo_path: str, caption: Optional[str] = None) -> bool:
 
 def sync_wait_for_input(
     prompt: str, 
-    timeout: int = 300, 
+    timeout: int = 0, 
     options: Optional[List[Tuple[str, str]]] = None
 ) -> Optional[str]:
     """

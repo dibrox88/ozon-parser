@@ -39,7 +39,7 @@ class Config:
     
     # Google Sheets - GID листов
     GOOGLE_SHEETS_CATALOG_GID = '1473954199'  # Лист "Настройки" с каталогом товаров
-    GOOGLE_SHEETS_SYNC_GID = '1946316259'     # Лист для синхронизации заказов (A:I)
+    GOOGLE_SHEETS_SYNC_GID = '2122054287'     # Лист для синхронизации заказов (A:I)
     
     @classmethod
     def validate(cls):

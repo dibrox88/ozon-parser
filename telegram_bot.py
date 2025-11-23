@@ -63,6 +63,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Доступные команды:\n\n"
         "/parse - Запустить парсинг вручную\n"
         "/parse_range - 📊 Парсинг диапазона заказов\n"
+        "/parse_wb - 🟣 Парсинг Wildberries (CSV)\n"
         "/stop - Остановить парсинг\n"
         "/status - Показать статус парсера\n"
         "/test_antidetect - 🧪 Тест обхода блокировок\n"
@@ -92,6 +93,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  • Парсит заказы от (710-30=680) до 710\n"
         "  • Формат: 46206571-0680 по 46206571-0710\n"
         "  • Для отмены: /cancel\n\n"
+        "<b>/parse_wb</b> - 🟣 Парсинг Wildberries\n"
+        "  • Читает wb_products.csv\n"
+        "  • Синхронизирует с Google Sheets\n"
+        "  • Группирует по месяцам (январь25)\n\n"
         "<b>/stop</b> - Остановить текущий парсинг\n"
         "  • Принудительно завершает работающий процесс\n"
         "  • Закрывает браузер и освобождает ресурсы\n\n"
@@ -328,6 +333,46 @@ async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         parsing_in_progress = False
         current_parser_process = None
+
+
+async def parse_wb_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /parse_wb - запустить парсинг WB CSV и синхронизацию."""
+    if not update.message or not update.effective_user:
+        return
+    
+    await update.message.reply_text(
+        "🚀 <b>Запускаю синхронизацию WB...</b>\n\n"
+        "Чтение wb_products.csv и обновление Google Sheets.",
+        parse_mode='HTML'
+    )
+    
+    logger.info(f"WB Sync запущен пользователем {update.effective_user.id}")
+    
+    try:
+        # Run sync in executor
+        loop = asyncio.get_running_loop()
+        from wb_sheets_sync import sync_wb_to_sheets
+        
+        result = await loop.run_in_executor(None, sync_wb_to_sheets)
+        
+        if result:
+            await update.message.reply_text(
+                "✅ <b>WB Синхронизация завершена успешно!</b>",
+                parse_mode='HTML'
+            )
+        else:
+            await update.message.reply_text(
+                "❌ <b>Ошибка при синхронизации WB</b>\n"
+                "Проверьте логи.",
+                parse_mode='HTML'
+            )
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка при запуске WB Sync: {e}")
+        await update.message.reply_text(
+            f"❌ <b>Ошибка</b>\n\n{str(e)}",
+            parse_mode='HTML'
+        )
 
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1032,6 +1077,7 @@ async def post_init(application: Application):
         BotCommand("start", "🏠 Главное меню"),
         BotCommand("parse", "🚀 Запустить парсинг"),
         BotCommand("parse_range", "📊 Парсить диапазон"),
+        BotCommand("parse_wb", "🟣 Парсить WB"),
         BotCommand("stop", "⏹️ Остановить парсинг"),
         BotCommand("test_antidetect", "🧪 Тест антидетекта"),
         BotCommand("cron_on", "⏰ Включить автозапуск"),
@@ -1056,6 +1102,7 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("parse", parse_command))
+    application.add_handler(CommandHandler("parse_wb", parse_wb_command))
     
     # ConversationHandler для /parse_range
     parse_range_handler = ConversationHandler(
