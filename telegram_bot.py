@@ -356,6 +356,9 @@ async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def run_wb_sync_background(update: Update):
     """Запуск синхронизации WB в фоновом режиме."""
+    if not update.message:
+        return
+        
     try:
         loop = asyncio.get_running_loop()
         from wb_sheets_sync import sync_wb_to_sheets

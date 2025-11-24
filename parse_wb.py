@@ -2,9 +2,10 @@
 Скрипт для парсинга товаров из файла wb.html.
 """
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 import re
 import csv
+from typing import Optional, List, Dict, Any
 
 
 def parse_price(price_text: str) -> str:
@@ -134,7 +135,7 @@ def get_standardized_name(name: str, mappings: dict) -> str:
     return name
 
 
-def parse_wb_html(file_path: str) -> list:
+def parse_wb_html(file_path: str) -> List[Dict[str, Any]]:
     """
     Парсит файл wb.html и извлекает товары.
     
@@ -158,16 +159,20 @@ def parse_wb_html(file_path: str) -> list:
     print(f"Найдено элементов списка: {len(all_li)}")
     
     for li in all_li:
+        # Пропускаем элементы, которые не являются тегами
+        if not isinstance(li, Tag):
+            continue
+            
         # 1. Определяем статус заказа
         status = "Получен"
         status_elem = li.find('p', class_='archive-item__status')
-        if status_elem:
+        if status_elem and isinstance(status_elem, Tag):
             status = status_elem.get_text(strip=True)
 
         # 2. Определяем дату
         date_text = ""
         date_elem = li.find('p', class_='archive-item__receive-date')
-        if date_elem:
+        if date_elem and isinstance(date_elem, Tag):
             # Извлекаем текст из span'ов. Обычно "Получен" "17 января"
             # Используем separator=' ', чтобы получить "Получен 17 января"
             date_text = date_elem.get_text(separator=' ', strip=True)
@@ -178,7 +183,12 @@ def parse_wb_html(file_path: str) -> list:
         # Проверяем, есть ли дата или статус (чтобы отсеять мусор)
         if not date_elem and not status_elem:
              # Попробуем найти по тексту "Получен", если класс не сработал
-            if not li.find(string=lambda t: t and ('Получен' in t)):
+            has_received_text = False
+            for text in li.strings:
+                if 'Получен' in text:
+                    has_received_text = True
+                    break
+            if not has_received_text:
                 continue
         
         # --- Извлекаем название ---
@@ -189,7 +199,7 @@ def parse_wb_html(file_path: str) -> list:
         # --- Извлекаем цену ---
         # <div class="archive-item__price">219 ₽</div>
         price_elem = li.find('div', class_='archive-item__price')
-        price_text = price_elem.get_text(strip=True) if price_elem else ""
+        price_text = price_elem.get_text(strip=True) if price_elem and isinstance(price_elem, Tag) else ""
         price = parse_price(price_text)
         
         # --- Парсим дату ---

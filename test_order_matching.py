@@ -9,6 +9,7 @@ import sys
 import json
 from pathlib import Path
 from loguru import logger
+from typing import Optional, Dict, Any
 
 # Настройка логирования
 logger.remove()
@@ -24,7 +25,7 @@ from config import Config
 from notifier import sync_send_message
 
 
-def load_order_from_json(order_number: str) -> dict:
+def load_order_from_json(order_number: str) -> Optional[Dict[str, Any]]:
     """Загрузить конкретный заказ из ozon_orders.json"""
     try:
         with open('ozon_orders.json', 'r', encoding='utf-8') as f:
@@ -42,7 +43,7 @@ def load_order_from_json(order_number: str) -> dict:
         return None
 
 
-def display_order_info(order: dict):
+def display_order_info(order: Dict[str, Any]) -> None:
     """Отобразить информацию о заказе"""
     logger.info("=" * 80)
     logger.info("📦 ИНФОРМАЦИЯ О ЗАКАЗЕ")
@@ -70,7 +71,7 @@ def display_order_info(order: dict):
     logger.info("\n" + "=" * 80)
 
 
-def test_order_matching(order: dict):
+def test_order_matching(order: Dict[str, Any]) -> None:
     """Протестировать сопоставление товаров в заказе"""
     try:
         logger.info("🔄 Инициализация системы...")
