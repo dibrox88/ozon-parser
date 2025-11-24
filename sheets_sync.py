@@ -593,21 +593,34 @@ class SheetsSynchronizer:
                 used_count = name_counters.get(old_name, 0)
                 if used_count < len(values_list):
                     # Есть неиспользованные значения
-                    unused = values_list[used_count:]
-                    for val_list in unused:
-                        # Проверяем есть ли хоть одно непустое значение
-                        if any(v for v in val_list):
+                    for unused_idx in range(used_count, len(values_list)):
+                        i_p_data = values_list[unused_idx]
+                        # Проверяем, что хотя бы одно значение не пустое
+                        if any(val for val in i_p_data):
                             lost_i_p_values.append({
-                                'old_name': old_name,
-                                'values': val_list
+                                'name': old_name,
+                                'i_p_data': i_p_data
                             })
-                            logger.warning(f"❗ Потеряны значения I-P: {old_name} = {val_list}")
             
-            # Сохраняем информацию о потерянных значениях для отчета
+            # Отправляем уведомление в Telegram, если есть потерянные данные
             if lost_i_p_values:
-                if not hasattr(self, '_lost_i_p_values'):
-                    self._lost_i_p_values = []
-                self._lost_i_p_values.extend(lost_i_p_values)
+                from notifier import sync_send_message
+                
+                msg = f"⚠️ <b>Удалены строки с данными в I-P для заказа {order_number}:</b>\n\n"
+                for item in lost_i_p_values[:10]:  # Показываем первые 10
+                    name = item['name']
+                    i_p_data = item['i_p_data']
+                    # Форматируем данные I-P
+                    i_p_str = ' | '.join([f"{chr(73+i)}:{val}" for i, val in enumerate(i_p_data) if val])
+                    msg += f"• <b>{name}</b>\n  {i_p_str}\n\n"
+                
+                if len(lost_i_p_values) > 10:
+                    msg += f"... и еще {len(lost_i_p_values) - 10} записей\n\n"
+                
+                msg += "💡 <i>Эти данные были в удаленных строках и не могут быть автоматически восстановлены</i>"
+                
+                sync_send_message(msg)
+                logger.warning(f"⚠️ Потеряно {len(lost_i_p_values)} записей с данными I-P при обновлении заказа {order_number}")
             
             # КРИТИЧНО: Очищаем границы ПОСЛЕ записи данных, но ПЕРЕД добавлением новых границ
             # Иначе новые вставленные строки будут иметь старые границы
