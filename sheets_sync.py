@@ -623,6 +623,40 @@ class SheetsSynchronizer:
             logger.error(f"❌ Ошибка обновления заказа: {e}")
             return False
     
+    def _format_lost_i_p_message(self, lost_items: list) -> str:
+        """
+        Форматировать сообщение о потерянных данных I-P.
+        
+        Args:
+            lost_items: Список словарей с потерянными значениями
+            
+        Returns:
+            Отформатированное сообщение для Telegram
+        """
+        if not lost_items:
+            return ""
+        
+        message = "⚠️ <b>Потеряны данные из колонок I-P:</b>\n\n"
+        
+        for item in lost_items:
+            old_name = item.get('old_name', 'Unknown')
+            values = item.get('values', [])
+            
+            # Форматируем значения (показываем только непустые)
+            non_empty_vals = []
+            col_names = ['I', 'J', 'K', 'L', 'M', 'N', 'O', 'P']
+            for idx, val in enumerate(values):
+                if val and val != 'FALSE':
+                    non_empty_vals.append(f"{col_names[idx]}={val}")
+            
+            if non_empty_vals:
+                vals_str = ", ".join(non_empty_vals)
+                message += f"• <b>{old_name}</b>: {vals_str}\n"
+        
+        message += "\n💡 Эти строки были удалены из таблицы, так как товар отсутствует в новом парсинге."
+        
+        return message
+    
     def sync_split_items_status(self, order: Dict) -> None:
         """
         УСТАРЕВШАЯ ФУНКЦИЯ: больше не используется.
@@ -1030,6 +1064,14 @@ class SheetsSynchronizer:
                             if self.update_order(order, sheets_data):
                                 updated_orders.append(order_number)
                                 sync_send_message(f"✅ Заказ {order_number} обновлён")
+                                
+                                # Проверяем, есть ли потерянные значения I-P
+                                if hasattr(self, '_lost_i_p_values') and self._lost_i_p_values:
+                                    lost_msg = self._format_lost_i_p_message(self._lost_i_p_values)
+                                    if lost_msg:
+                                        sync_send_message(lost_msg)
+                                    # Очищаем список после отправки
+                                    self._lost_i_p_values = []
                             else:
                                 sync_send_message(f"❌ Не удалось обновить заказ {order_number}")
             
