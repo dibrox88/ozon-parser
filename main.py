@@ -382,6 +382,25 @@ def main():
                     
                     logger.info(f"✅ Парсинг завершен. Успешно обработано: {len(all_orders_data)}/{len(orders)} заказов")
                     
+                    # КРИТИЧНО: Сохраняем обновленные cookies/сессию после успешного парсинга
+                    # Ozon обновляет токены при каждом запросе, поэтому нужно сохранить их
+                    logger.info("💾 Сохраняем обновленные cookies/сессию после парсинга...")
+                    try:
+                        # Сохраняем cookies (если используется cookies-based авторизация)
+                        if session_manager.cookies_exist():
+                            if session_manager.save_cookies_from_context(context):
+                                logger.success("✅ Cookies обновлены успешно")
+                            else:
+                                logger.warning("⚠️ Не удалось обновить cookies")
+                        
+                        # Сохраняем сессию (storage_state с cookies + localStorage)
+                        if session_manager.save_session(context):
+                            logger.success("✅ Сессия обновлена успешно")
+                        else:
+                            logger.warning("⚠️ Не удалось обновить сессию")
+                    except Exception as save_error:
+                        logger.warning(f"⚠️ Ошибка при сохранении сессии/cookies: {save_error}")
+                    
                     # Фильтруем исключённые заказы
                     from excluded_manager import ExcludedOrdersManager
                     excluded_manager = ExcludedOrdersManager()
