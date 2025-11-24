@@ -589,11 +589,21 @@ class SheetsSynchronizer:
             
             # Собираем потерянные значения колонок I-P (которые не были восстановлены)
             lost_i_p_values = []
+            logger.info(f"   🔍 Проверяем потерянные данные I-P...")
+            logger.info(f"   📊 Всего товаров в старых данных: {len(i_p_values_by_name)}")
+            
             for old_name, values_list in i_p_values_by_name.items():
                 used_count = name_counters.get(old_name, 0)
-                if used_count < len(values_list):
+                total_count = len(values_list)
+                
+                logger.debug(f"   • {old_name}: использовано {used_count}/{total_count}")
+                
+                if used_count < total_count:
                     # Есть неиспользованные значения
-                    for unused_idx in range(used_count, len(values_list)):
+                    unused_count = total_count - used_count
+                    logger.warning(f"   ⚠️ {old_name}: {unused_count} неиспользованных записей")
+                    
+                    for unused_idx in range(used_count, total_count):
                         i_p_data = values_list[unused_idx]
                         # Проверяем, что хотя бы одно значение не пустое
                         if any(val for val in i_p_data):
@@ -601,17 +611,28 @@ class SheetsSynchronizer:
                                 'name': old_name,
                                 'i_p_data': i_p_data
                             })
+                            logger.debug(f"      → Потеряна запись: {i_p_data}")
+            
+            logger.info(f"   📋 Обнаружено потерянных записей: {len(lost_i_p_values)}")
             
             # Отправляем уведомление в Telegram, если есть потерянные данные
             if lost_i_p_values:
                 from notifier import sync_send_message
                 
+                logger.warning(f"⚠️ ОТПРАВЛЯЕМ УВЕДОМЛЕНИЕ о {len(lost_i_p_values)} потерянных записях")
+                
                 msg = f"⚠️ <b>Удалены строки с данными в I-P для заказа {order_number}:</b>\n\n"
                 for item in lost_i_p_values[:10]:  # Показываем первые 10
                     name = item['name']
                     i_p_data = item['i_p_data']
-                    # Форматируем данные I-P
-                    i_p_str = ' | '.join([f"{chr(73+i)}:{val}" for i, val in enumerate(i_p_data) if val])
+                    # Форматируем данные I-P (показываем только непустые)
+                    i_p_parts = []
+                    col_names = ['I', 'J', 'K', 'L', 'M', 'N', 'O', 'P']
+                    for i, val in enumerate(i_p_data):
+                        if val and str(val).strip():
+                            i_p_parts.append(f"{col_names[i]}:<code>{val}</code>")
+                    
+                    i_p_str = ' | '.join(i_p_parts) if i_p_parts else '<i>пустые значения</i>'
                     msg += f"• <b>{name}</b>\n  {i_p_str}\n\n"
                 
                 if len(lost_i_p_values) > 10:
@@ -619,8 +640,13 @@ class SheetsSynchronizer:
                 
                 msg += "💡 <i>Эти данные были в удаленных строках и не могут быть автоматически восстановлены</i>"
                 
-                sync_send_message(msg)
-                logger.warning(f"⚠️ Потеряно {len(lost_i_p_values)} записей с данными I-P при обновлении заказа {order_number}")
+                try:
+                    sync_send_message(msg)
+                    logger.success(f"✅ Уведомление о потерянных данных отправлено")
+                except Exception as send_err:
+                    logger.error(f"❌ Ошибка отправки уведомления: {send_err}")
+            else:
+                logger.info("   ✅ Все данные I-P успешно восстановлены, потерь нет")
             
             # КРИТИЧНО: Очищаем границы ПОСЛЕ записи данных, но ПЕРЕД добавлением новых границ
             # Иначе новые вставленные строки будут иметь старые границы
