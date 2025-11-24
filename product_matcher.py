@@ -467,11 +467,11 @@ def match_product_interactive(
             mapped_name = name
             mapped_type = matcher.DEFAULT_TYPE
         
-        # Уточняем цвет ТОЛЬКО если это НЕ расходники
-        if mapped_type == "расходники":
+        # Уточняем цвет ТОЛЬКО если это НЕ расходники и НЕ подарок
+        if mapped_type in ["расходники", "подарок"]:
             if not color or color == '0':
                 color = 'Black'
-                logger.info(f"🎨 Цвет для расходников автоматически установлен: Black")
+                logger.info(f"🎨 Цвет для {mapped_type} автоматически установлен: Black")
         else:
             color = clarify_color_if_needed(color, name)
         
@@ -482,6 +482,9 @@ def match_product_interactive(
     # Инициализируем переменные на случай, если не будет выбора
     mapped_name = name
     mapped_type = matcher.DEFAULT_TYPE
+    
+    # Получаем дату из item, если она есть (для WB)
+    date = item.get('date', '')
     
     if not matches:
         # Преобразуем цвет для отображения
@@ -501,6 +504,9 @@ def match_product_interactive(
 • Цвет: {display_color}{color_status}
 • Количество: {quantity}
 • Цена: {price} ₽"""
+
+        if date:
+            message += f"\n• Дата: {date}"
         
         if order_number:
             order_url = f"https://www.ozon.ru/my/orderdetails/?order={order_number}"
@@ -508,31 +514,22 @@ def match_product_interactive(
         
         message += f"""
 
-❓ Предлагаем тип по умолчанию: {matcher.DEFAULT_TYPE}"
-
-💡 <b>Варианты ответа:</b>
-1. Отправьте <code>1</code> - использовать тип "расходники"
-2. Отправьте <code>2</code> - выбрать из каталога (сначала тип, затем товар или название)"""
-        
-        if not skip_split_option:
-            message += "\n3. Отправьте <code>3</code> - разбить на несколько штук"
-        
-        if order_number and excluded_manager:
-            message += f"\n4. Отправьте <code>4</code> - исключить весь заказ {order_number}"
-        
-        message += "\n\n⏳ Ожидаю ваш ответ..."
+❓ Предлагаем тип по умолчанию: {matcher.DEFAULT_TYPE}"""
         
         sync_send_message(message)
         
         # Собираем кнопки в зависимости от доступных опций
         button_options = [
             ("1", "1️⃣ Расходники"),
+            ("0", "0️⃣ Подарок"),
             ("2", "2️⃣ Каталог")
         ]
         if not skip_split_option:
             button_options.append(("3", "3️⃣ Разбить"))
         if order_number and excluded_manager:
             button_options.append(("4", "4️⃣ Исключить заказ"))
+        
+        button_options.append(("5", "5️⃣ Пропустить товар"))
         
         from notifier import sync_wait_for_input
         response = sync_wait_for_input(
@@ -545,6 +542,14 @@ def match_product_interactive(
             logger.warning(f"⏱️ Таймаут ожидания - используем тип по умолчанию для: {name}")
             mapped_name = name
             mapped_type = matcher.DEFAULT_TYPE
+        elif response.strip() == '5':
+            # Пропустить товар
+            logger.info(f"⏭️ Пользователь выбрал пропустить товар: {name}")
+            mapped_name = "SKIP"
+            mapped_type = "SKIP"
+            # Сохраняем как SKIP, чтобы в будущем тоже пропускать
+            matcher.save_mapping(name, color, mapped_name, mapped_type)
+            return mapped_name, mapped_type
         elif response.strip() == '1':
             # Использовать тип "расходники" - всегда с цветом Black
             logger.info(f"✅ Пользователь выбрал тип 'расходники' для: {name}")
@@ -553,6 +558,14 @@ def match_product_interactive(
             # Для расходников всегда устанавливаем цвет Black без уточнения
             color = 'Black'
             logger.info(f"🎨 Цвет для расходников автоматически установлен: Black")
+        elif response.strip() == '0':
+            # Использовать тип "подарок"
+            logger.info(f"✅ Пользователь выбрал тип 'подарок' для: {name}")
+            mapped_name = name
+            mapped_type = "подарок"
+            # Для подарков всегда устанавливаем цвет Black без уточнения
+            color = 'Black'
+            logger.info(f"🎨 Цвет для подарков автоматически установлен: Black")
         elif response.strip() == '3':
             # Разбивка товара на компоненты
             if skip_split_option:
@@ -617,8 +630,8 @@ def match_product_interactive(
                         # Сортируем: сначала последние добавленные (из конца таблицы)
                         products_by_type = list(reversed(products_by_type))
                         
-                        # Показываем до 15 товаров
-                        products_to_show = products_by_type[:15]
+                        # Показываем до 30 товаров
+                        products_to_show = products_by_type[:30]
                         
                         product_list_msg = f"📦 <b>Товары типа '{selected_type}':</b>\n\n"
                         for idx, product in enumerate(products_to_show, start=1):
@@ -630,10 +643,10 @@ def match_product_interactive(
                         sync_send_message(product_list_msg)
                         
                         # Создаем кнопки для товаров
-                        emoji_numbers = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+                        emoji_numbers = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟","1️⃣1️⃣","1️⃣2️⃣","1️⃣3️⃣","1️⃣4️⃣","1️⃣5️⃣","1️⃣6️⃣","1️⃣7️⃣","1️⃣8️⃣","1️⃣9️⃣","2️⃣0️⃣","2️⃣1️⃣","2️⃣2️⃣","2️⃣3️⃣","2️⃣4️⃣","2️⃣5️⃣","2️⃣6️⃣","2️⃣7️⃣","2️⃣8️⃣","2️⃣9️⃣","3️⃣0️⃣"]
                         product_button_options = []
                         for idx in range(len(products_to_show)):
-                            emoji = emoji_numbers[idx] if idx < 10 else f"{idx+1}️⃣"
+                            emoji = emoji_numbers[idx] if idx <= 30 else f"{idx+1}️⃣"
                             product_button_options.append((str(idx + 1), emoji))
                         
                         product_response = sync_wait_for_input(
@@ -699,12 +712,12 @@ def match_product_interactive(
             mapped_name = name
             mapped_type = matcher.DEFAULT_TYPE
         
-        # Уточняем цвет ТОЛЬКО если это НЕ расходники
+        # Уточняем цвет ТОЛЬКО если это НЕ расходники и НЕ подарок
         # Для расходников всегда используем Black без уточнения
-        if mapped_type == "расходники":
+        if mapped_type in ["расходники", "подарок"]:
             if not color or color == '0':
                 color = 'Black'
-                logger.info(f"🎨 Цвет для расходников автоматически установлен: Black")
+                logger.info(f"🎨 Цвет для {mapped_type} автоматически установлен: Black")
         else:
             # Для других типов уточняем цвет если он некорректный
             color = clarify_color_if_needed(color, name)
@@ -721,6 +734,9 @@ def match_product_interactive(
     elif color in ['Black', 'White']:
         color_status = f" ✅ (преобразован в {color})"
     
+    # Получаем дату из item, если она есть (для WB)
+    date = item.get('date', '')
+    
     message = f"""
 🔍 <b>Найдены похожие товары</b>
 
@@ -729,6 +745,9 @@ def match_product_interactive(
 • Цвет: {display_color}{color_status}
 • Количество: {quantity}
 • Цена: {price} ₽"""
+
+    if date:
+        message += f"\n• Дата: {date}"
     
     if order_number:
         order_url = f"https://www.ozon.ru/my/orderdetails/?order={order_number}"
@@ -748,18 +767,6 @@ def match_product_interactive(
         if match['type'] not in unique_types:
             unique_types.append(match['type'])
     
-    message += "\n\n💡 <b>Варианты ответа:</b>\n"
-    message += "• <code>1-5</code> - выбрать вариант по номеру\n"
-    message += "• <code>6</code> - выбрать из каталога (сначала тип, затем товар или название)"
-    
-    if not skip_split_option:
-        message += "\n• <code>7</code> - разбить на несколько штук"
-    
-    if order_number and excluded_manager:
-        message += f"\n• <code>8</code> - исключить весь заказ {order_number}"
-    
-    message += "\n\n⏳ Ожидаю ваш ответ..."
-    
     sync_send_message(message)
     
     # Собираем кнопки (1-5 для совпадений + дополнительные опции)
@@ -769,6 +776,7 @@ def match_product_interactive(
         button_options.append(("7", "7️⃣ Разбить"))
     if order_number and excluded_manager:
         button_options.append(("8", "8️⃣ Исключить"))
+    button_options.append(("9", "9️⃣ Пропустить"))
     
     from notifier import sync_wait_for_input
     response = sync_wait_for_input(
@@ -783,6 +791,13 @@ def match_product_interactive(
         best_match = matches[0]
         mapped_name = best_match['name']
         mapped_type = best_match['type']
+    elif response.strip() == '9':
+        # Пропустить товар
+        logger.info(f"⏭️ Пользователь выбрал пропустить товар: {name}")
+        mapped_name = "SKIP"
+        mapped_type = "SKIP"
+        matcher.save_mapping(name, color, mapped_name, mapped_type)
+        return mapped_name, mapped_type
     elif response.strip() == '7':
         # Разбивка товара
         if skip_split_option:
@@ -967,11 +982,11 @@ def match_product_interactive(
         mapped_name = best_match['name']
         mapped_type = best_match['type']
     
-    # Уточняем цвет ТОЛЬКО если это НЕ расходники
-    if mapped_type == "расходники":
+    # Уточняем цвет ТОЛЬКО если это НЕ расходники и НЕ подарок
+    if mapped_type in ["расходники", "подарок"]:
         if not color or color == '0':
             color = 'Black'
-            logger.info(f"🎨 Цвет для расходников автоматически установлен: Black")
+            logger.info(f"🎨 Цвет для {mapped_type} автоматически установлен: Black")
     else:
         color = clarify_color_if_needed(color, name)
     
@@ -1168,6 +1183,11 @@ def enrich_orders_with_mapping(
             # Проверяем кеш
             if key in mapping_cache:
                 cache_entry = mapping_cache[key]
+                
+                # Пропускаем товары с меткой SKIP
+                if cache_entry.get('mapped_name') == "SKIP":
+                    logger.info(f"⏭️ Пропускаем товар (SKIP): {item['name']}")
+                    continue
                 
                 # Обычный маппинг (с возможным split_units)
                 enriched_item = item.copy()

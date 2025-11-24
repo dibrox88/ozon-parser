@@ -47,7 +47,15 @@ def parse_date(date_text: str) -> str:
         
         if month_name in months:
             month = months[month_name]
-            year = '2025'  # Текущий год
+            
+            # Ищем год (2024 или 2025)
+            year_match = re.search(r'(202[4-5])', date_text)
+            if year_match:
+                year = year_match.group(1)
+            else:
+                from datetime import datetime
+                year = str(datetime.now().year)  # Текущий год
+                
             return f"{day}.{month}.{year}"
     
     # Если не удалось распарсить - возвращаем исходный текст
@@ -131,12 +139,8 @@ def parse_wb_html(file_path: str) -> list:
     Парсит файл wb.html и извлекает товары.
     
     Returns:
-        Список словарей с данными товаров (name, price, date, standardized_name)
+        Список словарей с данными товаров (name, price, date)
     """
-    # Загружаем маппинги
-    mappings = load_mappings()
-    print(f"Загружено {len(mappings)} правил маппинга")
-
     with open(file_path, 'r', encoding='utf-8') as f:
         html_content = f.read()
     
@@ -154,16 +158,27 @@ def parse_wb_html(file_path: str) -> list:
     print(f"Найдено элементов списка: {len(all_li)}")
     
     for li in all_li:
-        # Проверяем статус заказа - если "Отмена заказа", пропускаем
+        # 1. Определяем статус заказа
+        status = "Получен"
         status_elem = li.find('p', class_='archive-item__status')
-        if status_elem and "Отмена заказа" in status_elem.get_text():
-            continue
+        if status_elem:
+            status = status_elem.get_text(strip=True)
 
-        # Проверяем, есть ли дата (чтобы отсеять мусор)
+        # 2. Определяем дату
+        date_text = ""
         date_elem = li.find('p', class_='archive-item__receive-date')
-        if not date_elem:
-            # Попробуем найти по тексту, если класс не сработал
-            if not li.find(string=lambda t: t and ('ноября' in t or 'Получен' in t)):
+        if date_elem:
+            # Извлекаем текст из span'ов. Обычно "Получен" "17 января"
+            # Используем separator=' ', чтобы получить "Получен 17 января"
+            date_text = date_elem.get_text(separator=' ', strip=True)
+        
+        # Если статус "Отмена...", даты может и не быть в receive-date
+        # Но мы не парсим btn-wrap по требованию
+        
+        # Проверяем, есть ли дата или статус (чтобы отсеять мусор)
+        if not date_elem and not status_elem:
+             # Попробуем найти по тексту "Получен", если класс не сработал
+            if not li.find(string=lambda t: t and ('Получен' in t)):
                 continue
         
         # --- Извлекаем название ---
@@ -177,30 +192,16 @@ def parse_wb_html(file_path: str) -> list:
         price_text = price_elem.get_text(strip=True) if price_elem else ""
         price = parse_price(price_text)
         
-        # --- Извлекаем дату ---
-        # <p class="archive-item__receive-date"><span>Получен</span> <span>22 ноября</span></p>
-        if date_elem:
-            date_text = date_elem.get_text(separator=' ', strip=True)
-        else:
-            # Fallback поиск даты
-            d_node = li.find(string=lambda t: t and 'ноября' in t)
-            if d_node:
-                date_text = d_node.parent.get_text(separator=' ', strip=True)
-            else:
-                date_text = ""
-                
+        # --- Парсим дату ---
         date = parse_date(date_text)
-        
-        # Получаем стандартизированное имя
-        std_name = get_standardized_name(name, mappings)
         
         # Добавляем только если есть название
         if name:
             products.append({
                 'name': name,
-                'standardized_name': std_name,
                 'price': price,
-                'date': date
+                'date': date,
+                'status': status
             })
     
     return products
@@ -215,15 +216,15 @@ def export_to_csv(products: list, output_file: str = 'wb_products.csv'):
             writer = csv.writer(f, delimiter=';')
             
             # Заголовки
-            writer.writerow(['Наименование', 'Стандартизированное наименование', 'Цена', 'Дата'])
+            writer.writerow(['Наименование', 'Цена', 'Дата', 'Статус'])
             
             # Данные
             for product in products:
                 writer.writerow([
                     product.get('name', ''),
-                    product.get('standardized_name', ''),
                     product.get('price', ''),
-                    product.get('date', '')
+                    product.get('date', ''),
+                    product.get('status', '')
                 ])
         
         print(f"✓ Экспортировано {len(products)} товаров в {output_file}")
@@ -239,13 +240,13 @@ def export_to_csv(products: list, output_file: str = 'wb_products.csv'):
         try:
             with open(new_file, 'w', encoding='utf-8-sig', newline='') as f:
                 writer = csv.writer(f, delimiter=';')
-                writer.writerow(['Наименование', 'Стандартизированное наименование', 'Цена', 'Дата'])
+                writer.writerow(['Наименование', 'Цена', 'Дата', 'Статус'])
                 for product in products:
                     writer.writerow([
                         product.get('name', ''),
-                        product.get('standardized_name', ''),
                         product.get('price', ''),
-                        product.get('date', '')
+                        product.get('date', ''),
+                        product.get('status', '')
                     ])
             print(f"✓ Экспортировано {len(products)} товаров в {new_file}")
         except Exception as e:
@@ -262,17 +263,17 @@ def main():
     
     if products:
         # Показываем данные в виде таблицы
-        print("\n" + "="*100)
-        print(f"{'Наименование':<60} {'Цена':<15} {'Дата':<15}")
-        print("="*100)
+        print("\n" + "="*120)
+        print(f"{'Наименование':<50} {'Цена':<10} {'Дата':<15} {'Статус':<20}")
+        print("="*120)
         
         for product in products[:10]:  # Показываем первые 10
-            print(f"{product['name']:<60} {product['price']:<15} {product['date']:<15}")
+            print(f"{product['name']:<50} {product['price']:<10} {product['date']:<15} {product['status']:<20}")
         
         if len(products) > 10:
             print(f"... и еще {len(products) - 10} товаров")
         
-        print("="*100)
+        print("="*120)
         
         # Экспортируем в CSV
         export_to_csv(products)

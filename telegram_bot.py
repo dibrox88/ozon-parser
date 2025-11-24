@@ -3,6 +3,8 @@
 import asyncio
 import io
 import os
+import sys
+import shutil
 import re
 import signal
 import subprocess
@@ -26,6 +28,23 @@ WAITING_LAST_ORDER, WAITING_COUNT = range(2)
 
 PROMPT_MANAGER = PromptManager()
 PROMPT_ID_PATTERN = re.compile(r"\b([A-F0-9]{8})\b", re.IGNORECASE)
+
+
+def get_system_command(cmd: str) -> str:
+    """Получить полный путь к системной команде."""
+    if sys.platform == 'win32':
+        return cmd  # На Windows полагаемся на PATH
+    
+    # На Linux проверяем стандартные пути, если команда не найдена в PATH
+    if shutil.which(cmd):
+        return cmd
+        
+    common_paths = [f"/usr/bin/{cmd}", f"/bin/{cmd}", f"/usr/sbin/{cmd}"]
+    for path in common_paths:
+        if os.path.exists(path):
+            return path
+            
+    return cmd
 
 
 def check_update(update: Update) -> bool:
@@ -335,24 +354,13 @@ async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current_parser_process = None
 
 
-async def parse_wb_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /parse_wb - запустить парсинг WB CSV и синхронизацию."""
-    if not update.message or not update.effective_user:
-        return
-    
-    await update.message.reply_text(
-        "🚀 <b>Запускаю синхронизацию WB...</b>\n\n"
-        "Чтение wb_products.csv и обновление Google Sheets.",
-        parse_mode='HTML'
-    )
-    
-    logger.info(f"WB Sync запущен пользователем {update.effective_user.id}")
-    
+async def run_wb_sync_background(update: Update):
+    """Запуск синхронизации WB в фоновом режиме."""
     try:
-        # Run sync in executor
         loop = asyncio.get_running_loop()
         from wb_sheets_sync import sync_wb_to_sheets
         
+        # Запускаем синхронизацию в отдельном потоке
         result = await loop.run_in_executor(None, sync_wb_to_sheets)
         
         if result:
@@ -366,13 +374,29 @@ async def parse_wb_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Проверьте логи.",
                 parse_mode='HTML'
             )
-            
     except Exception as e:
         logger.error(f"❌ Ошибка при запуске WB Sync: {e}")
         await update.message.reply_text(
             f"❌ <b>Ошибка</b>\n\n{str(e)}",
             parse_mode='HTML'
         )
+
+
+async def parse_wb_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /parse_wb - запустить парсинг WB CSV и синхронизацию."""
+    if not update.message or not update.effective_user:
+        return
+    
+    await update.message.reply_text(
+        "🚀 <b>Запускаю синхронизацию WB...</b>\n\n"
+        "Чтение wb_products.csv и обновление Google Sheets.",
+        parse_mode='HTML'
+    )
+    
+    logger.info(f"WB Sync запущен пользователем {update.effective_user.id}")
+    
+    # Запускаем задачу в фоне, чтобы не блокировать обработку сообщений (кнопок)
+    asyncio.create_task(run_wb_sync_background(update))
 
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -388,8 +412,9 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not parsing_in_progress and current_parser_process is None:
         # Дополнительная проверка: может быть зависший процесс
         try:
+            pgrep_cmd = get_system_command("pgrep")
             result = subprocess.run(
-                ["pgrep", "-f", "python.*main.py"],
+                [pgrep_cmd, "-f", "python.*main.py"],
                 capture_output=True,
                 text=True,
                 timeout=5
@@ -419,8 +444,9 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # (это значит был вызван /stop после обнаружения зависшего процесса)
     if current_parser_process is None:
         try:
+            pkill_cmd = get_system_command("pkill")
             result = subprocess.run(
-                ["pkill", "-9", "-f", "python.*main.py"],
+                [pkill_cmd, "-9", "-f", "python.*main.py"],
                 capture_output=True,
                 text=True,
                 timeout=5
@@ -1053,8 +1079,9 @@ async def post_init(application: Application):
     
     # Проверяем, есть ли реально запущенный парсер
     try:
+        pgrep_cmd = get_system_command("pgrep")
         result = subprocess.run(
-            ["pgrep", "-f", "python.*main.py"],
+            [pgrep_cmd, "-f", "python.*main.py"],
             capture_output=True,
             text=True
         )

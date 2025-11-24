@@ -233,7 +233,7 @@ class OzonParser:
             
             # По умолчанию
             logger.warning(f"Не удалось определить статус из текста: {text[:100]}")
-            return 'неизвестно'
+            return 'в пути'
             
         except Exception as e:
             logger.error(f"Ошибка при определении статуса: {e}")

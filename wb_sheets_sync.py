@@ -29,12 +29,18 @@ class WBSheetsSynchronizer(SheetsSynchronizer):
             actual_rows = quantity * split_units
             unit_price = round(price / split_units, 2) if split_units > 1 else price
             
+            # Determine status cell value
+            if status == 'Получен':
+                status_cell = True
+            else:
+                status_cell = status
+
             for _ in range(actual_rows):
                 row = [
                     date,           # A: Date
                     month_year,     # B: MonthYear
                     "WB",           # C: Source
-                    status,         # D: Status
+                    status_cell,    # D: Status
                     "",             # E: Formula
                     unit_price,     # F: Price
                     mapped_name,    # G: Mapped Name
@@ -48,21 +54,9 @@ class WBSheetsSynchronizer(SheetsSynchronizer):
         
         return rows
 
-def get_mapping_info(original_name: str, mappings: Dict) -> Dict:
-    """Find mapping info for original name."""
-    normalized_name = " ".join(original_name.lower().split())
-    variants = ['black', 'white', '0', '']
-    
-    for color in variants:
-        if color:
-            key = f"{normalized_name}|{color}"
-        else:
-            key = normalized_name
-            
-        if key in mappings:
-            return mappings[key]
-            
-    return {}
+from product_matcher import ProductMatcher, enrich_orders_with_mapping
+from sheets_manager import SheetsManager
+from excluded_manager import ExcludedOrdersManager
 
 def sync_wb_to_sheets(csv_path: str = 'wb_products.csv', mappings_path: str = 'product_mappings.json') -> bool:
     """
@@ -71,14 +65,6 @@ def sync_wb_to_sheets(csv_path: str = 'wb_products.csv', mappings_path: str = 'p
     try:
         logger.info("🚀 Запуск синхронизации WB...")
         sync_send_message("🚀 <b>Запуск синхронизации WB...</b>")
-
-        # Load mappings
-        try:
-            with open(mappings_path, 'r', encoding='utf-8') as f:
-                mappings = json.load(f)
-        except Exception as e:
-            logger.error(f"Failed to load mappings: {e}")
-            mappings = {}
 
         # Load CSV
         products = []
@@ -108,7 +94,7 @@ def sync_wb_to_sheets(csv_path: str = 'wb_products.csv', mappings_path: str = 'p
             date_str = row.get('Дата', '')
             price_str = row.get('Цена', '0')
             original_name = row.get('Наименование', '')
-            std_name = row.get('Стандартизированное наименование', '')
+            status = row.get('Статус', 'Получен')
             
             # Parse price
             try:
@@ -128,24 +114,13 @@ def sync_wb_to_sheets(csv_path: str = 'wb_products.csv', mappings_path: str = 'p
             except:
                 month_year = "unknown"
             
-            # Get mapping info
-            mapping_info = get_mapping_info(original_name, mappings)
-            mapped_type = mapping_info.get('mapped_type', '')
-            split_units = mapping_info.get('split_units', 1)
-            
-            # If std_name is empty in CSV, try to get from mapping
-            if not std_name:
-                std_name = mapping_info.get('mapped_name', original_name)
-
             item = {
                 'name': original_name,
-                'mapped_name': std_name,
-                'mapped_type': mapped_type,
                 'price': price,
                 'quantity': 1,
-                'status': 'Получен',
+                'status': status,
                 'date': date_str,
-                'split_units': split_units
+                'color': '' # WB doesn't provide color in CSV easily
             }
             
             if month_year not in orders_map:
@@ -159,14 +134,41 @@ def sync_wb_to_sheets(csv_path: str = 'wb_products.csv', mappings_path: str = 'p
 
         # Convert to list
         orders_list = list(orders_map.values())
-        orders_data = {'orders': orders_list, 'total_orders': len(orders_list)}
         
-        logger.info(f"📊 Сформировано {len(orders_list)} групп заказов (по месяцам)")
+        # --- Interactive Matching ---
+        # Initialize SheetsManager to get catalog
+        sheets_manager = SheetsManager(Config.GOOGLE_CREDENTIALS_FILE)
+        if not sheets_manager.connect():
+            sync_send_message("❌ Ошибка подключения к Google Sheets (чтение)")
+            return False
+            
+        sheets_products = sheets_manager.load_products_from_sheet(
+            Config.GOOGLE_SHEETS_URL, 
+            "Настройки"
+        )
+        
+        # Initialize ProductMatcher
+        matcher = ProductMatcher(sheets_products, mappings_path)
+        
+        # Initialize ExcludedOrdersManager
+        excluded_manager = ExcludedOrdersManager()
+        
+        # Enrich orders with interactive matching
+        enriched_orders = enrich_orders_with_mapping(
+            orders_list, 
+            matcher, 
+            interactive=True,
+            excluded_manager=excluded_manager
+        )
+        
+        orders_data = {'orders': enriched_orders, 'total_orders': len(enriched_orders)}
+        
+        logger.info(f"📊 Сформировано {len(enriched_orders)} групп заказов (по месяцам)")
         
         # Sync
         sync = WBSheetsSynchronizer(Config.GOOGLE_CREDENTIALS_FILE)
         if not sync.connect():
-            sync_send_message("❌ Ошибка подключения к Google Sheets")
+            sync_send_message("❌ Ошибка подключения к Google Sheets (запись)")
             return False
             
         if not sync.open_sync_worksheet(Config.GOOGLE_SHEETS_URL, Config.GOOGLE_SHEETS_SYNC_GID):
