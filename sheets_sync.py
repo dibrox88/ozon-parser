@@ -455,7 +455,19 @@ class SheetsSynchronizer:
                             if key not in columns_i_p_mapping:
                                 columns_i_p_mapping[key] = []
                             # Извлекаем колонки I-P (индексы 8-15)
-                            i_p_values = [row[i] if len(row) > i else '' for i in range(8, 16)]
+                            # Столбец J (индекс 9) = формула, не сохраняем
+                            i_p_values = []
+                            for i in range(8, 16):
+                                if i == 9:  # Столбец J - формула, пропускаем
+                                    i_p_values.append('')
+                                elif len(row) > i:
+                                    val = row[i]
+                                    # Очищаем пробелы
+                                    if isinstance(val, str):
+                                        val = val.strip()
+                                    i_p_values.append(val)
+                                else:
+                                    i_p_values.append('')
                             columns_i_p_mapping[key].append(i_p_values)
                     
                     logger.info(f"   💾 Сохранено {len(columns_i_p_mapping)} уникальных значений из колонок I-P")
@@ -569,20 +581,24 @@ class SheetsSynchronizer:
             
             # Восстанавливаем колонки I-P (8 колонок)
             # Для каждой строки извлекаем значения I-P (индексы 8-15)
+            # Столбец J (индекс 1 в массиве) = формула, всегда пустой
             i_p_values = []
             for row in new_rows:
                 row_i_p = []
                 for i in range(8, 16):  # Колонки I-P (индексы 8-15)
-                    if len(row) > i:
+                    if i == 9:  # Столбец J - формула, всегда пустой
+                        row_i_p.append('')
+                    elif len(row) > i:
                         val = row[i]
-                        # Очищаем пробелы и заменяем FALSE на пустую строку для checkbox
+                        # Очищаем пробелы
                         if isinstance(val, str):
                             val = val.strip()
+                            # Заменяем FALSE на пустую строку для checkbox
                             if val.upper() == 'FALSE':
                                 val = ''
                         row_i_p.append(val)
                     else:
-                        row_i_p.append("")
+                        row_i_p.append('')
                 i_p_values.append(row_i_p)
             
             i_p_range = f"I{insert_position}:P{insert_position + new_row_count - 1}"
