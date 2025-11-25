@@ -575,9 +575,11 @@ class SheetsSynchronizer:
                 for i in range(8, 16):  # Колонки I-P (индексы 8-15)
                     if len(row) > i:
                         val = row[i]
-                        # Заменяем FALSE на пустую строку для checkbox
-                        if val == 'FALSE':
-                            val = ''
+                        # Очищаем пробелы и заменяем FALSE на пустую строку для checkbox
+                        if isinstance(val, str):
+                            val = val.strip()
+                            if val.upper() == 'FALSE':
+                                val = ''
                         row_i_p.append(val)
                     else:
                         row_i_p.append("")
