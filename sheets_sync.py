@@ -479,6 +479,20 @@ class SheetsSynchronizer:
                 logger.info(f"   🗑️ Удаление {len(scattered_rows)} разбросанных строк...")
                 for row_num in sorted(scattered_rows, reverse=True):
                     self.worksheet.delete_rows(row_num)
+                
+                # ВАЖНО: После удаления строк номера continuous_block сдвигаются!
+                # Считаем сколько удалённых строк было ПЕРЕД основным блоком
+                rows_deleted_before = sum(1 for r in scattered_rows if r < continuous_block[0])
+                if rows_deleted_before > 0:
+                    logger.info(f"   📐 Корректировка номеров строк: -{rows_deleted_before} (удалены строки перед блоком)")
+                    continuous_block = [r - rows_deleted_before for r in continuous_block]
+            
+            # ВАЖНО: Очищаем столбцы I-P во ВСЁМ непрерывном блоке ПЕРЕД любыми изменениями
+            # Это предотвращает "призрачные" данные от предыдущих записей
+            logger.info(f"   🧹 Очистка столбцов I-P во всём блоке ({continuous_block[0]}-{continuous_block[-1]})...")
+            clear_range = f"I{continuous_block[0]}:P{continuous_block[-1]}"
+            empty_rows = [[''] * 8] * len(continuous_block)
+            self.worksheet.update(range_name=clear_range, values=empty_rows, value_input_option='RAW')  # type: ignore[arg-type]
             
             # Обновляем/добавляем строки в непрерывном блоке
             continuous_count = len(continuous_block)
@@ -493,7 +507,11 @@ class SheetsSynchronizer:
             elif new_row_count < continuous_count:
                 # Нужно удалить лишние строки
                 rows_to_delete = continuous_count - new_row_count
-                logger.info(f"   🗑️ Удаление {rows_to_delete} лишних строк из блока...")
+                delete_start = continuous_block[0] + new_row_count  # Первая удаляемая строка
+                delete_end = continuous_block[-1]  # Последняя удаляемая строка
+                
+                logger.info(f"   🗑️ Удаление {rows_to_delete} лишних строк из блока (строки {delete_start}-{delete_end})...")
+                # Удаляем с конца
                 for _ in range(rows_to_delete):
                     self.worksheet.delete_rows(continuous_block[-1])
                     continuous_block.pop()
@@ -506,16 +524,44 @@ class SheetsSynchronizer:
             new_rows = self.add_sum_formulas(new_rows, insert_position)
             
             # Восстанавливаем данные из колонок I-P в новые строки
-            # ПОРЯДОК: Сначала D="TRUE", потом D="FALSE" и остальные
+            # ПРИОРИТЕТ: Строки с непустым столбцом I (артикул) важнее строк только с K-P
             # Сопоставление ТОЛЬКО по G (mapped_name), НЕ по статусу
             
             # Группируем старые значения I-P ТОЛЬКО по G (mapped_name)
-            i_p_values_by_name = {}
+            # РАЗДЕЛЯЕМ на 2 группы: с артикулом (I) и без артикула
+            i_p_with_article = {}    # Группа A: строки с непустым I
+            i_p_without_article = {} # Группа B: строки с пустым I, но непустыми K-P
+            
             for key, values_list in columns_i_p_mapping.items():
                 mapped_name = key.split('|')[0]  # Берем только название, без статуса
-                if mapped_name not in i_p_values_by_name:
-                    i_p_values_by_name[mapped_name] = []
-                i_p_values_by_name[mapped_name].extend(values_list)
+                
+                for i_p_vals in values_list:
+                    # Проверяем есть ли артикул в столбце I (индекс 0 в массиве i_p_vals)
+                    has_article = bool(i_p_vals[0] and str(i_p_vals[0]).strip())
+                    
+                    if has_article:
+                        # Группа A: есть артикул
+                        if mapped_name not in i_p_with_article:
+                            i_p_with_article[mapped_name] = []
+                        i_p_with_article[mapped_name].append(i_p_vals)
+                    else:
+                        # Группа B: нет артикула, но есть другие данные
+                        if mapped_name not in i_p_without_article:
+                            i_p_without_article[mapped_name] = []
+                        i_p_without_article[mapped_name].append(i_p_vals)
+            
+            logger.info(f"   📊 Данные I-P: с артикулом={sum(len(v) for v in i_p_with_article.values())}, без артикула={sum(len(v) for v in i_p_without_article.values())}")
+            
+            # Объединяем: сначала с артикулом, потом без (артикулы перезаписывают K-P)
+            i_p_values_by_name = {}
+            for mapped_name in set(list(i_p_with_article.keys()) + list(i_p_without_article.keys())):
+                i_p_values_by_name[mapped_name] = []
+                # Сначала добавляем записи С артикулом (приоритет)
+                if mapped_name in i_p_with_article:
+                    i_p_values_by_name[mapped_name].extend(i_p_with_article[mapped_name])
+                # Потом добавляем записи БЕЗ артикула
+                if mapped_name in i_p_without_article:
+                    i_p_values_by_name[mapped_name].extend(i_p_without_article[mapped_name])
             
             # Счетчик для каждого названия товара
             name_counters = {}
@@ -640,21 +686,30 @@ class SheetsSynchronizer:
                 logger.warning(f"⚠️ ОТПРАВЛЯЕМ УВЕДОМЛЕНИЕ о {len(lost_i_p_values)} потерянных записях")
                 
                 msg = f"⚠️ <b>Удалены строки с данными в I-P для заказа {order_number}:</b>\n\n"
-                for item in lost_i_p_values[:10]:  # Показываем первые 10
+                
+                # Группируем потерянные записи по названию товара для компактности
+                grouped_lost = {}
+                for item in lost_i_p_values:
                     name = item['name']
                     i_p_data = item['i_p_data']
-                    # Форматируем данные I-P (показываем только непустые)
-                    i_p_parts = []
-                    col_names = ['I', 'J', 'K', 'L', 'M', 'N', 'O', 'P']
-                    for i, val in enumerate(i_p_data):
-                        if val and str(val).strip():
-                            i_p_parts.append(f"{col_names[i]}:<code>{val}</code>")
-                    
-                    i_p_str = ' | '.join(i_p_parts) if i_p_parts else '<i>пустые значения</i>'
-                    msg += f"• <b>{name}</b>\n  {i_p_str}\n\n"
+                    if name not in grouped_lost:
+                        grouped_lost[name] = []
+                    grouped_lost[name].append(i_p_data)
                 
-                if len(lost_i_p_values) > 10:
-                    msg += f"... и еще {len(lost_i_p_values) - 10} записей\n\n"
+                # Выводим ВСЕ потерянные записи (без обрезания)
+                for name, i_p_list in grouped_lost.items():
+                    msg += f"• <b>{name}</b> ({len(i_p_list)} шт):\n"
+                    for i_p_data in i_p_list:
+                        # Форматируем данные I-P (показываем только непустые)
+                        i_p_parts = []
+                        col_names = ['I', 'J', 'K', 'L', 'M', 'N', 'O', 'P']
+                        for i, val in enumerate(i_p_data):
+                            if val and str(val).strip():
+                                i_p_parts.append(f"{col_names[i]}:<code>{val}</code>")
+                        
+                        i_p_str = ' | '.join(i_p_parts) if i_p_parts else '<пустые значения>'
+                        msg += f"  {i_p_str}\n"
+                    msg += "\n"
                 
                 msg += "💡 <i>Эти данные были в удаленных строках и не могут быть автоматически восстановлены</i>"
                 
@@ -667,11 +722,11 @@ class SheetsSynchronizer:
                 logger.info("   ✅ Все данные I-P успешно восстановлены, потерь нет")
             
             # КРИТИЧНО: Очищаем границы ПОСЛЕ записи данных, но ПЕРЕД добавлением новых границ
-            # Иначе новые вставленные строки будут иметь старые границы
-            self._clear_borders_for_range(start_row, new_row_count)
+            # Используем insert_position (скорректированный после удаления строк), НЕ start_row!
+            self._clear_borders_for_range(insert_position, new_row_count)
             
             # Применяем границы ПОСЛЕ всех манипуляций со строками
-            self.add_group_borders(start_row, new_row_count, new_rows)
+            self.add_group_borders(insert_position, new_row_count, new_rows)
             
             logger.info(f"✅ Заказ {order_number} успешно обновлён")
             return True
@@ -840,6 +895,7 @@ class SheetsSynchronizer:
     def add_sum_formulas(self, sorted_rows: List[List], start_row: int) -> List[List]:
         """
         Добавить формулы SUM в столбец E для каждой группы заказа.
+        ОЧИЩАЕТ столбец E для всех строк кроме первой в группе.
         
         Args:
             sorted_rows: Отсортированные строки
@@ -850,6 +906,12 @@ class SheetsSynchronizer:
         """
         if not sorted_rows:
             return sorted_rows
+        
+        # Сначала очищаем столбец E во всех строках
+        for row in sorted_rows:
+            while len(row) < 5:
+                row.append('')
+            row[4] = ''  # E: очищаем
         
         # Группируем по order_number (колонка B, индекс 1)
         current_order = None
