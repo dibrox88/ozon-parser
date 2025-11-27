@@ -33,54 +33,67 @@ class TelegramNotifier:
     def __init__(self):
         """Инициализация."""
         self.bot = Bot(token=Config.TELEGRAM_BOT_TOKEN)
-        self.chat_id = Config.TELEGRAM_CHAT_ID
+        # Получаем список всех пользователей для отправки сообщений
+        self.chat_ids = [uid for uid in Config.ALLOWED_USERS if uid and uid != 0]
+        # Если список пуст - используем основной chat_id
+        if not self.chat_ids:
+            self.chat_ids = [int(Config.TELEGRAM_CHAT_ID)] if Config.TELEGRAM_CHAT_ID else []
         self.prompt_manager = PROMPT_MANAGER
+        logger.info(f"📬 Notifier инициализирован для {len(self.chat_ids)} пользователей: {self.chat_ids}")
         
     async def send_message(self, message: str) -> bool:
         """
-        Отправить текстовое сообщение.
+        Отправить текстовое сообщение всем пользователям.
         
         Args:
             message: Текст сообщения
             
         Returns:
-            True если успешно, False иначе
+            True если успешно отправлено хотя бы одному, False иначе
         """
-        try:
-            await self.bot.send_message(
-                chat_id=self.chat_id,
-                text=message,
-                parse_mode='HTML'
-            )
+        success = False
+        for chat_id in self.chat_ids:
+            try:
+                await self.bot.send_message(
+                    chat_id=chat_id,
+                    text=message,
+                    parse_mode='HTML'
+                )
+                success = True
+            except TelegramError as e:
+                logger.error(f"Ошибка отправки сообщения пользователю {chat_id}: {e}")
+        
+        if success:
             logger.info(f"Сообщение отправлено: {message[:50]}...")
-            return True
-        except TelegramError as e:
-            logger.error(f"Ошибка отправки сообщения: {e}")
-            return False
+        return success
     
     async def send_photo(self, photo_path: str, caption: Optional[str] = None) -> bool:
         """
-        Отправить фото.
+        Отправить фото всем пользователям.
         
         Args:
             photo_path: Путь к фото
             caption: Подпись к фото
             
         Returns:
-            True если успешно, False иначе
+            True если успешно отправлено хотя бы одному, False иначе
         """
-        try:
-            with open(photo_path, 'rb') as photo:
-                await self.bot.send_photo(
-                    chat_id=self.chat_id,
-                    photo=photo,
-                    caption=caption
-                )
+        success = False
+        for chat_id in self.chat_ids:
+            try:
+                with open(photo_path, 'rb') as photo:
+                    await self.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=photo,
+                        caption=caption
+                    )
+                success = True
+            except (TelegramError, FileNotFoundError) as e:
+                logger.error(f"Ошибка отправки фото пользователю {chat_id}: {e}")
+        
+        if success:
             logger.info(f"Фото отправлено: {photo_path}")
-            return True
-        except (TelegramError, FileNotFoundError) as e:
-            logger.error(f"Ошибка отправки фото: {e}")
-            return False
+        return success
     
     async def wait_for_user_input(
         self, 
@@ -129,16 +142,22 @@ class TelegramNotifier:
                 keyboard.append(row)
             reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Отправляем сообщение с кнопками
-        try:
-            await self.bot.send_message(
-                chat_id=self.chat_id,
-                text=message,
-                parse_mode='HTML',
-                reply_markup=reply_markup
-            )
-        except TelegramError as e:
-            logger.error(f"Ошибка отправки промпта: {e}")
+        # Отправляем сообщение с кнопками всем пользователям
+        sent = False
+        for chat_id in self.chat_ids:
+            try:
+                await self.bot.send_message(
+                    chat_id=chat_id,
+                    text=message,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+                sent = True
+            except TelegramError as e:
+                logger.error(f"Ошибка отправки промпта пользователю {chat_id}: {e}")
+        
+        if not sent:
+            logger.error("Не удалось отправить промпт ни одному пользователю")
             return None
         
         logger.info(f"📤 Промпт {prompt_id} отправлен, ожидаем ответ пользователя")

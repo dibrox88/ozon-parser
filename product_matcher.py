@@ -179,13 +179,17 @@ class ProductMatcher:
         if key in self.mappings:
             return self.mappings[key]
         
-        # Если не нашли и цвет пустой/не указан - пробуем с black и white
-        if not color or color.lower() in ['0', 'не указан']:
-            for fallback_color in ['black', 'white', '']:
-                fallback_key = self._create_mapping_key(name, fallback_color)
-                if fallback_key in self.mappings:
-                    logger.info(f"✅ Найден маппинг с fallback цветом '{fallback_color}': {name}")
-                    return self.mappings[fallback_key]
+        # Пробуем другие варианты цветов (товар мог быть сохранён с другим цветом)
+        fallback_colors = ['black', 'white', '']
+        # Исключаем текущий цвет из fallback, если он там есть
+        current_color_lower = color.lower().strip() if color else ''
+        fallback_colors = [c for c in fallback_colors if c != current_color_lower]
+        
+        for fallback_color in fallback_colors:
+            fallback_key = self._create_mapping_key(name, fallback_color)
+            if fallback_key in self.mappings:
+                logger.info(f"✅ Найден маппинг с fallback цветом '{fallback_color}' (искали '{color}'): {name}")
+                return self.mappings[fallback_key]
         
         return None
     
