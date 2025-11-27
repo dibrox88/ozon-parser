@@ -9,7 +9,7 @@ import re
 import signal
 import subprocess
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 from loguru import logger
 from telegram import BotCommand, Update
@@ -28,6 +28,68 @@ WAITING_LAST_ORDER, WAITING_COUNT = range(2)
 
 PROMPT_MANAGER = PromptManager()
 PROMPT_ID_PATTERN = re.compile(r"\b([A-F0-9]{8})\b", re.IGNORECASE)
+
+# Глобальная ссылка на application для отправки уведомлений всем админам
+_bot_application: Optional[Application] = None
+
+
+def is_user_allowed(user_id: int) -> bool:
+    """Проверка, разрешён ли пользователю доступ к боту."""
+    return user_id in Config.ALLOWED_USERS
+
+
+async def check_access(update: Update) -> bool:
+    """
+    Проверить доступ пользователя. 
+    Возвращает True если доступ разрешён, False если нет.
+    При отказе отправляет сообщение пользователю.
+    """
+    if not update.effective_user:
+        return False
+    
+    user_id = update.effective_user.id
+    
+    if is_user_allowed(user_id):
+        return True
+    
+    # Доступ запрещён
+    user_info = f"@{update.effective_user.username}" if update.effective_user.username else update.effective_user.full_name
+    logger.warning(f"⛔ Попытка доступа от неавторизованного пользователя: {user_info} (ID: {user_id})")
+    
+    if update.message:
+        await update.message.reply_text(
+            f"⛔ <b>Доступ запрещён</b>\n\n"
+            f"Ваш ID: <code>{user_id}</code>\n"
+            f"Обратитесь к администратору для получения доступа.",
+            parse_mode='HTML'
+        )
+    
+    return False
+
+
+async def notify_all_admins(message: str, exclude_user_id: Optional[int] = None, parse_mode: str = 'HTML'):
+    """
+    Отправить уведомление всем разрешённым пользователям.
+    
+    Args:
+        message: Текст сообщения
+        exclude_user_id: ID пользователя, которому НЕ отправлять (инициатор действия)
+        parse_mode: Режим парсинга (HTML/Markdown)
+    """
+    if not Config.NOTIFY_ALL_ADMINS or not _bot_application:
+        return
+    
+    for user_id in Config.ALLOWED_USERS:
+        if user_id == exclude_user_id or user_id == 0:
+            continue
+        try:
+            await _bot_application.bot.send_message(
+                chat_id=user_id,
+                text=message,
+                parse_mode=parse_mode
+            )
+        except Exception as e:
+            logger.debug(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
 
 
 def get_system_command(cmd: str) -> str:
@@ -77,6 +139,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
     
+    # Проверка доступа
+    if not await check_access(update):
+        return
+    
     welcome_message = (
         "🤖 <b>Ozon Parser Bot</b>\n\n"
         "Доступные команды:\n\n"
@@ -89,6 +155,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/cron_on - ⏰ Включить автозапуск\n"
         "/cron_off - ⏸️ Отключить автозапуск\n"
         "/cron_status - 📋 Статус автозапуска\n"
+        "/myid - 🆔 Показать мой Telegram ID\n"
         "/help - Показать эту справку\n\n"
         "⏰ Автоматический запуск: каждые 15 минут (9:00-21:00 МСК)"
     )
@@ -98,6 +165,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /help - справка."""
     if not update.message:
+        return
+    
+    # Проверка доступа
+    if not await check_access(update):
         return
     
     help_message = (
@@ -144,9 +215,38 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(help_message, parse_mode='HTML')
 
 
+async def myid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /myid - показать Telegram ID пользователя."""
+    if not update.message or not update.effective_user:
+        return
+    
+    user = update.effective_user
+    user_id = user.id
+    username = f"@{user.username}" if user.username else "не установлен"
+    full_name = user.full_name or "не указано"
+    
+    # Проверяем, есть ли доступ
+    has_access = is_user_allowed(user_id)
+    access_status = "✅ Доступ разрешён" if has_access else "⛔ Доступ запрещён"
+    
+    await update.message.reply_text(
+        f"🆔 <b>Информация о пользователе</b>\n\n"
+        f"<b>ID:</b> <code>{user_id}</code>\n"
+        f"<b>Username:</b> {username}\n"
+        f"<b>Имя:</b> {full_name}\n\n"
+        f"<b>Статус:</b> {access_status}\n\n"
+        f"💡 <i>Отправьте этот ID администратору для получения доступа</i>",
+        parse_mode='HTML'
+    )
+
+
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /status - показать статус парсера."""
     if not update.message:
+        return
+    
+    # Проверка доступа
+    if not await check_access(update):
         return
     
     global parsing_in_progress, last_parse_time
@@ -307,6 +407,10 @@ async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.effective_user:
         return
     
+    # Проверка доступа
+    if not await check_access(update):
+        return
+    
     global parsing_in_progress, last_parse_time, current_parser_process
     
     if parsing_in_progress:
@@ -319,6 +423,13 @@ async def parse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     parsing_in_progress = True
     last_parse_time = datetime.now()
+    
+    # Уведомляем других админов о запуске
+    user_label = _format_user_label(update)
+    await notify_all_admins(
+        f"🚀 <b>Парсинг запущен</b>\n\nПользователь: {user_label}",
+        exclude_user_id=update.effective_user.id
+    )
     
     await update.message.reply_text(
         "🚀 <b>Запускаю парсер...</b>\n\n"
@@ -390,6 +501,10 @@ async def parse_wb_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.effective_user:
         return
     
+    # Проверка доступа
+    if not await check_access(update):
+        return
+    
     await update.message.reply_text(
         "🚀 <b>Запускаю синхронизацию WB...</b>\n\n"
         "Чтение wb_products.csv и обновление Google Sheets.",
@@ -405,6 +520,10 @@ async def parse_wb_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /stop - остановить парсинг."""
     if not check_update(update):
+        return
+    
+    # Проверка доступа
+    if not await check_access(update):
         return
     
     assert update.message is not None
@@ -520,6 +639,10 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def parse_range_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Начало conversation для /parse_range - запрос последнего номера заказа."""
     if not check_update(update):
+        return ConversationHandler.END
+    
+    # Проверка доступа
+    if not await check_access(update):
         return ConversationHandler.END
     
     assert update.message is not None
@@ -715,6 +838,10 @@ async def test_antidetect_command(update: Update, context: ContextTypes.DEFAULT_
     if not check_update(update):
         return
     
+    # Проверка доступа
+    if not await check_access(update):
+        return
+    
     assert update.message is not None
     assert update.effective_user is not None
     
@@ -789,6 +916,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 async def cron_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /cron_status - проверить статус автозапуска."""
     if not check_update(update):
+        return
+    
+    # Проверка доступа
+    if not await check_access(update):
         return
     
     assert update.message is not None
@@ -878,6 +1009,10 @@ async def cron_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def cron_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /cron_on - включить автозапуск."""
     if not check_update(update):
+        return
+    
+    # Проверка доступа
+    if not await check_access(update):
         return
     
     assert update.message is not None
@@ -980,6 +1115,10 @@ async def cron_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cron_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /cron_off - отключить автозапуск."""
     if not check_update(update):
+        return
+    
+    # Проверка доступа
+    if not await check_access(update):
         return
     
     assert update.message is not None
@@ -1122,14 +1261,20 @@ async def post_init(application: Application):
 
 def main():
     """Запуск бота."""
+    global _bot_application
+    
     logger.info("🤖 Запуск Telegram бота для управления парсером...")
     
     # Создаем приложение
     application = Application.builder().token(Config.TELEGRAM_BOT_TOKEN).post_init(post_init).build()
     
+    # Сохраняем ссылку для уведомлений всем админам
+    _bot_application = application
+    
     # Добавляем обработчики команд
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("myid", myid_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("parse", parse_command))
     application.add_handler(CommandHandler("parse_wb", parse_wb_command))
