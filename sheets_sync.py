@@ -475,22 +475,46 @@ class SheetsSynchronizer:
                     logger.warning(f"   ⚠️ Не удалось прочитать колонки I-P: {e}")
             
             # НОВАЯ ЛОГИКА: Удаляем только РАЗБРОСАННЫЕ строки (батч-запросом)
+            # ОПТИМИЗАЦИЯ: Объединяем соседние строки в блоки для удаления
             if scattered_rows:
                 logger.info(f"   🗑️ Удаление {len(scattered_rows)} разбросанных строк батч-запросом...")
-                # Батч-удаление строк (сортируем по убыванию, чтобы индексы не сдвигались)
+                
+                # Группируем соседние строки в блоки
+                sorted_scattered = sorted(scattered_rows, reverse=True)  # Сортируем по убыванию
+                delete_blocks = []  # [(start, end), ...] - блоки для удаления
+                
+                current_block_start = sorted_scattered[0]
+                current_block_end = sorted_scattered[0]
+                
+                for i in range(1, len(sorted_scattered)):
+                    if sorted_scattered[i] == current_block_end - 1:
+                        # Строка продолжает блок
+                        current_block_end = sorted_scattered[i]
+                    else:
+                        # Сохраняем текущий блок и начинаем новый
+                        delete_blocks.append((current_block_end, current_block_start))  # (start, end) в порядке возрастания
+                        current_block_start = sorted_scattered[i]
+                        current_block_end = sorted_scattered[i]
+                
+                # Добавляем последний блок
+                delete_blocks.append((current_block_end, current_block_start))
+                
+                # Создаём запросы на удаление блоков (от больших индексов к меньшим)
                 delete_requests = []
-                for row_num in sorted(scattered_rows, reverse=True):
+                for block_start, block_end in delete_blocks:
                     delete_requests.append({
                         "deleteDimension": {
                             "range": {
                                 "sheetId": self.worksheet.id,
                                 "dimension": "ROWS",
-                                "startIndex": row_num - 1,  # 0-индексация
-                                "endIndex": row_num
+                                "startIndex": block_start - 1,  # 0-индексация
+                                "endIndex": block_end  # endIndex не включается
                             }
                         }
                     })
+                
                 if delete_requests and self.spreadsheet:
+                    logger.info(f"   📦 Удаление {len(delete_blocks)} блоков строк: {delete_blocks}")
                     self.spreadsheet.batch_update({"requests": delete_requests})
                 
                 # ВАЖНО: После удаления строк номера continuous_block сдвигаются!
@@ -518,16 +542,29 @@ class SheetsSynchronizer:
                 for _ in range(rows_to_add):
                     self.worksheet.insert_row([], index=insert_position)
             elif new_row_count < continuous_count:
-                # Нужно удалить лишние строки
+                # Нужно удалить лишние строки - батч-удалением одним запросом
                 rows_to_delete = continuous_count - new_row_count
                 delete_start = continuous_block[0] + new_row_count  # Первая удаляемая строка
                 delete_end = continuous_block[-1]  # Последняя удаляемая строка
                 
-                logger.info(f"   🗑️ Удаление {rows_to_delete} лишних строк из блока (строки {delete_start}-{delete_end})...")
-                # Удаляем с конца
-                for _ in range(rows_to_delete):
-                    self.worksheet.delete_rows(continuous_block[-1])
-                    continuous_block.pop()
+                logger.info(f"   🗑️ Удаление {rows_to_delete} лишних строк из блока (строки {delete_start}-{delete_end}) одним запросом...")
+                
+                # Батч-удаление всего блока лишних строк за один запрос
+                if self.spreadsheet:
+                    delete_request = {
+                        "deleteDimension": {
+                            "range": {
+                                "sheetId": self.worksheet.id,
+                                "dimension": "ROWS",
+                                "startIndex": delete_start - 1,  # 0-индексация
+                                "endIndex": delete_end  # endIndex не включается, поэтому delete_end (а не delete_end + 1)
+                            }
+                        }
+                    }
+                    self.spreadsheet.batch_update({"requests": [delete_request]})
+                    
+                    # Обновляем continuous_block
+                    continuous_block = continuous_block[:new_row_count]
             
             # Позиция для записи данных - начало непрерывного блока
             insert_position = continuous_block[0]
@@ -537,8 +574,7 @@ class SheetsSynchronizer:
             new_rows = self.add_sum_formulas(new_rows, insert_position)
             
             # Восстанавливаем данные из колонок I-P в новые строки
-            # ПРИОРИТЕТ: Строки с непустым столбцом I (артикул) важнее строк только с K-P
-            # Сопоставление ТОЛЬКО по G (mapped_name), НЕ по статусу
+            # Сопоставление ТОЛЬКО по G (mapped_name)
             
             # Группируем старые значения I-P ТОЛЬКО по G (mapped_name)
             # РАЗДЕЛЯЕМ на 2 группы: с артикулом (I) и без артикула
@@ -575,6 +611,83 @@ class SheetsSynchronizer:
                 # Потом добавляем записи БЕЗ артикула
                 if mapped_name in i_p_without_article:
                     i_p_values_by_name[mapped_name].extend(i_p_without_article[mapped_name])
+            
+            # Получаем список всех названий товаров из новых данных (orders)
+            new_names = set(row[6] for row in new_rows if len(row) > 6 and row[6])
+            
+            # Проверяем, есть ли названия в таблице, которых нет в orders
+            # Если есть - спрашиваем пользователя, куда переносить данные I-P
+            unmatched_names = set(i_p_values_by_name.keys()) - new_names
+            name_mapping = {}  # {старое_название: новое_название}
+            
+            if unmatched_names:
+                logger.warning(f"   ⚠️ Найдено {len(unmatched_names)} названий товаров из таблицы, которых нет в orders")
+                
+                for old_name in unmatched_names:
+                    # Проверяем, есть ли данные I-P для этого товара
+                    i_p_data = i_p_values_by_name.get(old_name, [])
+                    has_data = any(any(val for val in row) for row in i_p_data)
+                    
+                    if not has_data:
+                        logger.debug(f"      Пропускаем '{old_name}' - нет данных в I-P")
+                        continue
+                    
+                    # Формируем сообщение с вариантами
+                    new_names_list = sorted(new_names)
+                    
+                    # Создаём кнопки для выбора
+                    options = []
+                    for i, name in enumerate(new_names_list[:8], 1):  # Максимум 8 вариантов
+                        options.append((str(i), f"{i}. {name[:30]}"))
+                    options.append(("0", "❌ Пропустить"))
+                    
+                    # Форматируем данные I-P для показа
+                    i_p_preview = []
+                    for row_data in i_p_data[:3]:  # Показываем до 3 записей
+                        parts = [str(v) for v in row_data if v]
+                        if parts:
+                            i_p_preview.append(' | '.join(parts))
+                    
+                    msg = (
+                        f"❓ <b>Товар из таблицы не найден в заказе:</b>\n"
+                        f"<code>{old_name}</code>\n\n"
+                        f"<b>Данные I-P ({len(i_p_data)} шт):</b>\n"
+                    )
+                    for preview in i_p_preview:
+                        msg += f"  <code>{preview}</code>\n"
+                    if len(i_p_data) > 3:
+                        msg += f"  ... и ещё {len(i_p_data) - 3}\n"
+                    
+                    msg += f"\n<b>Выберите товар для переноса данных:</b>\n"
+                    for i, name in enumerate(new_names_list[:8], 1):
+                        msg += f"{i}. {name}\n"
+                    msg += "\n0 - пропустить (данные будут потеряны)"
+                    
+                    try:
+                        response = sync_wait_for_input(msg, timeout=120, options=options)
+                        
+                        if response and response.isdigit():
+                            choice = int(response)
+                            if 1 <= choice <= len(new_names_list[:8]):
+                                new_name = new_names_list[choice - 1]
+                                name_mapping[old_name] = new_name
+                                logger.info(f"      ✅ '{old_name}' → '{new_name}'")
+                                sync_send_message(f"✅ <code>{old_name}</code> → <code>{new_name}</code>")
+                            else:
+                                logger.info(f"      ❌ Пропущено: '{old_name}'")
+                        else:
+                            logger.info(f"      ❌ Пропущено (таймаут/отмена): '{old_name}'")
+                    except Exception as e:
+                        logger.warning(f"      ⚠️ Ошибка запроса для '{old_name}': {e}")
+            
+            # Применяем маппинг названий к i_p_values_by_name
+            for old_name, new_name in name_mapping.items():
+                if old_name in i_p_values_by_name:
+                    if new_name not in i_p_values_by_name:
+                        i_p_values_by_name[new_name] = []
+                    i_p_values_by_name[new_name].extend(i_p_values_by_name[old_name])
+                    del i_p_values_by_name[old_name]
+                    logger.info(f"   🔄 Перенесены данные I-P: '{old_name}' → '{new_name}'")
             
             # Счетчик для каждого названия товара
             name_counters = {}
@@ -675,8 +788,6 @@ class SheetsSynchronizer:
             
             # Отправляем уведомление в Telegram, если есть потерянные данные
             if self._lost_i_p_values:
-                from notifier import sync_send_message
-                
                 logger.warning(f"⚠️ ОТПРАВЛЯЕМ УВЕДОМЛЕНИЕ о {len(self._lost_i_p_values)} потерянных записях")
                 
                 msg = f"⚠️ <b>Удалены строки с данными в I-P для заказа {order_number}:</b>\n\n"
@@ -694,12 +805,11 @@ class SheetsSynchronizer:
                 for name, i_p_list in grouped_lost.items():
                     msg += f"• <b>{name}</b> ({len(i_p_list)} шт):\n"
                     for i_p_data in i_p_list:
-                        # Форматируем данные I-P (показываем только непустые)
+                        # Форматируем данные I-P (показываем только непустые значения без названий столбцов)
                         i_p_parts = []
-                        col_names = ['I', 'J', 'K', 'L', 'M', 'N', 'O', 'P']
-                        for i, val in enumerate(i_p_data):
+                        for val in i_p_data:
                             if val and str(val).strip():
-                                i_p_parts.append(f"{col_names[i]}:<code>{val}</code>")
+                                i_p_parts.append(f"<code>{val}</code>")
                         
                         i_p_str = ' | '.join(i_p_parts) if i_p_parts else '<пустые значения>'
                         msg += f"  {i_p_str}\n"
