@@ -43,7 +43,7 @@ class TelegramNotifier:
         
     async def send_message(self, message: str) -> bool:
         """
-        Отправить текстовое сообщение всем пользователям.
+        Отправить текстовое сообщение всем пользователям параллельно.
         
         Args:
             message: Текст сообщения
@@ -51,17 +51,24 @@ class TelegramNotifier:
         Returns:
             True если успешно отправлено хотя бы одному, False иначе
         """
-        success = False
-        for chat_id in self.chat_ids:
+        if not self.chat_ids:
+            return False
+        
+        async def send_to_user(chat_id: int) -> bool:
             try:
                 await self.bot.send_message(
                     chat_id=chat_id,
                     text=message,
                     parse_mode='HTML'
                 )
-                success = True
+                return True
             except TelegramError as e:
                 logger.error(f"Ошибка отправки сообщения пользователю {chat_id}: {e}")
+                return False
+        
+        # Отправляем параллельно всем пользователям
+        results = await asyncio.gather(*[send_to_user(cid) for cid in self.chat_ids])
+        success = any(results)
         
         if success:
             logger.info(f"Сообщение отправлено: {message[:50]}...")
@@ -69,7 +76,7 @@ class TelegramNotifier:
     
     async def send_photo(self, photo_path: str, caption: Optional[str] = None) -> bool:
         """
-        Отправить фото всем пользователям.
+        Отправить фото всем пользователям параллельно.
         
         Args:
             photo_path: Путь к фото
@@ -78,8 +85,10 @@ class TelegramNotifier:
         Returns:
             True если успешно отправлено хотя бы одному, False иначе
         """
-        success = False
-        for chat_id in self.chat_ids:
+        if not self.chat_ids:
+            return False
+        
+        async def send_photo_to_user(chat_id: int) -> bool:
             try:
                 with open(photo_path, 'rb') as photo:
                     await self.bot.send_photo(
@@ -87,9 +96,14 @@ class TelegramNotifier:
                         photo=photo,
                         caption=caption
                     )
-                success = True
+                return True
             except (TelegramError, FileNotFoundError) as e:
                 logger.error(f"Ошибка отправки фото пользователю {chat_id}: {e}")
+                return False
+        
+        # Отправляем параллельно всем пользователям
+        results = await asyncio.gather(*[send_photo_to_user(cid) for cid in self.chat_ids])
+        success = any(results)
         
         if success:
             logger.info(f"Фото отправлено: {photo_path}")
@@ -142,9 +156,8 @@ class TelegramNotifier:
                 keyboard.append(row)
             reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Отправляем сообщение с кнопками всем пользователям
-        sent = False
-        for chat_id in self.chat_ids:
+        # Отправляем сообщение с кнопками всем пользователям параллельно
+        async def send_prompt_to_user(chat_id: int) -> bool:
             try:
                 await self.bot.send_message(
                     chat_id=chat_id,
@@ -152,11 +165,14 @@ class TelegramNotifier:
                     parse_mode='HTML',
                     reply_markup=reply_markup
                 )
-                sent = True
+                return True
             except TelegramError as e:
                 logger.error(f"Ошибка отправки промпта пользователю {chat_id}: {e}")
+                return False
         
-        if not sent:
+        results = await asyncio.gather(*[send_prompt_to_user(cid) for cid in self.chat_ids])
+        
+        if not any(results):
             logger.error("Не удалось отправить промпт ни одному пользователю")
             return None
         

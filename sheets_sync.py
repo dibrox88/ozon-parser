@@ -48,7 +48,7 @@ class SheetsSynchronizer:
         self.client: Optional[gspread.Client] = None
         self.spreadsheet: Optional[gspread.Spreadsheet] = None
         self.worksheet: Optional[gspread.Worksheet] = None
-        self._lost_i_values: List[Dict[str, str]] = []  # Список потерянных значений колонки I
+        self._lost_i_p_values: List[Dict[str, Any]] = []  # Список потерянных значений колонок I-P
         self.product_mappings: Dict[str, Any] = {}  # Загруженные маппинги товаров
         self._load_product_mappings()
     
@@ -474,11 +474,24 @@ class SheetsSynchronizer:
                 except Exception as e:
                     logger.warning(f"   ⚠️ Не удалось прочитать колонки I-P: {e}")
             
-            # НОВАЯ ЛОГИКА: Удаляем только РАЗБРОСАННЫЕ строки (начиная с конца)
+            # НОВАЯ ЛОГИКА: Удаляем только РАЗБРОСАННЫЕ строки (батч-запросом)
             if scattered_rows:
-                logger.info(f"   🗑️ Удаление {len(scattered_rows)} разбросанных строк...")
+                logger.info(f"   🗑️ Удаление {len(scattered_rows)} разбросанных строк батч-запросом...")
+                # Батч-удаление строк (сортируем по убыванию, чтобы индексы не сдвигались)
+                delete_requests = []
                 for row_num in sorted(scattered_rows, reverse=True):
-                    self.worksheet.delete_rows(row_num)
+                    delete_requests.append({
+                        "deleteDimension": {
+                            "range": {
+                                "sheetId": self.worksheet.id,
+                                "dimension": "ROWS",
+                                "startIndex": row_num - 1,  # 0-индексация
+                                "endIndex": row_num
+                            }
+                        }
+                    })
+                if delete_requests and self.spreadsheet:
+                    self.spreadsheet.batch_update({"requests": delete_requests})
                 
                 # ВАЖНО: После удаления строк номера continuous_block сдвигаются!
                 # Считаем сколько удалённых строк было ПЕРЕД основным блоком
@@ -566,55 +579,36 @@ class SheetsSynchronizer:
             # Счетчик для каждого названия товара
             name_counters = {}
             
-            # ЭТАП 1: Заполняем строки где D="TRUE" (получен)
-            for idx, row in enumerate(new_rows):
+            # Сортируем строки: сначала TRUE (получен), потом остальные
+            # Это гарантирует, что I-P данные сначала присвоятся полученным товарам
+            sorted_indices = sorted(
+                range(len(new_rows)),
+                key=lambda i: (0 if (new_rows[i][3] if len(new_rows[i]) > 3 else '') == "TRUE" else 1, i)
+            )
+            
+            # Заполняем I-P данные в один проход (сначала TRUE, потом остальные)
+            for idx in sorted_indices:
+                row = new_rows[idx]
                 mapped_name = row[6] if len(row) > 6 else ''  # G: mapped_name
-                status = row[3] if len(row) > 3 else ''       # D: status
-
-                if status == "TRUE":
-                    # Инициализируем счетчик для этого товара
-                    if mapped_name not in name_counters:
-                        name_counters[mapped_name] = 0
-
-                    # Восстанавливаем значения I-P по названию товара (G)
-                    i_p_vals = [""] * 8  # 8 пустых колонок по умолчанию
-                    if mapped_name in i_p_values_by_name and name_counters[mapped_name] < len(i_p_values_by_name[mapped_name]):
-                        i_p_vals = i_p_values_by_name[mapped_name][name_counters[mapped_name]]
-                        name_counters[mapped_name] += 1
-
-                    # Добавляем значения I-P в строку (индексы 8-15)
-                    while len(row) < 8:
-                        row.append("")
-                    # Удаляем старые значения I-P если есть
-                    row = row[:8]
-                    # Добавляем новые/восстановленные значения I-P
-                    row.extend(i_p_vals)
-                    new_rows[idx] = row
-
-            # ЭТАП 2: Заполняем строки где D!="TRUE" (FALSE, в пути, отменен и т.д.)
-            for idx, row in enumerate(new_rows):
-                mapped_name = row[6] if len(row) > 6 else ''  # G: mapped_name
-                status = row[3] if len(row) > 3 else ''       # D: status
-
-                if status != "TRUE":
-                    # Инициализируем счетчик для этого товара
-                    if mapped_name not in name_counters:
-                        name_counters[mapped_name] = 0
-
-                    # Восстанавливаем значения I-P по названию товара (G)
-                    i_p_vals = [""] * 8  # 8 пустых колонок по умолчанию
-                    if mapped_name in i_p_values_by_name and name_counters[mapped_name] < len(i_p_values_by_name[mapped_name]):
-                        i_p_vals = i_p_values_by_name[mapped_name][name_counters[mapped_name]]
-                        name_counters[mapped_name] += 1
-
-                    # Добавляем значения I-P в строку (индексы 8-15)
-                    while len(row) < 8:
-                        row.append("")
-                    # Удаляем старые значения I-P если есть
-                    row = row[:8]
-                    # Добавляем новые/восстановленные значения I-P
-                    row.extend(i_p_vals)
-                    new_rows[idx] = row
+                
+                # Инициализируем счетчик для этого товара
+                if mapped_name not in name_counters:
+                    name_counters[mapped_name] = 0
+                
+                # Восстанавливаем значения I-P по названию товара (G)
+                i_p_vals = [""] * 8  # 8 пустых колонок по умолчанию
+                if mapped_name in i_p_values_by_name and name_counters[mapped_name] < len(i_p_values_by_name[mapped_name]):
+                    i_p_vals = i_p_values_by_name[mapped_name][name_counters[mapped_name]]
+                    name_counters[mapped_name] += 1
+                
+                # Добавляем значения I-P в строку (индексы 8-15)
+                while len(row) < 8:
+                    row.append("")
+                # Удаляем старые значения I-P если есть
+                row = row[:8]
+                # Добавляем новые/восстановленные значения I-P
+                row.extend(i_p_vals)
+                new_rows[idx] = row
             
             # Записываем новые данные (только A-H, НЕ трогаем I-P)
             # Разбиваем данные: отдельно A-H и отдельно I-P
@@ -652,7 +646,7 @@ class SheetsSynchronizer:
             logger.info(f"   ✅ Восстановлены колонки I-P (сопоставлено по названию товара)")
             
             # Собираем потерянные значения колонок I-P (которые не были восстановлены)
-            lost_i_p_values = []
+            self._lost_i_p_values = []
             logger.info(f"   🔍 Проверяем потерянные данные I-P...")
             logger.info(f"   📊 Всего товаров в старых данных: {len(i_p_values_by_name)}")
             
@@ -671,25 +665,25 @@ class SheetsSynchronizer:
                         i_p_data = values_list[unused_idx]
                         # Проверяем, что хотя бы одно значение не пустое
                         if any(val for val in i_p_data):
-                            lost_i_p_values.append({
+                            self._lost_i_p_values.append({
                                 'name': old_name,
                                 'i_p_data': i_p_data
                             })
                             logger.debug(f"      → Потеряна запись: {i_p_data}")
             
-            logger.info(f"   📋 Обнаружено потерянных записей: {len(lost_i_p_values)}")
+            logger.info(f"   📋 Обнаружено потерянных записей: {len(self._lost_i_p_values)}")
             
             # Отправляем уведомление в Telegram, если есть потерянные данные
-            if lost_i_p_values:
+            if self._lost_i_p_values:
                 from notifier import sync_send_message
                 
-                logger.warning(f"⚠️ ОТПРАВЛЯЕМ УВЕДОМЛЕНИЕ о {len(lost_i_p_values)} потерянных записях")
+                logger.warning(f"⚠️ ОТПРАВЛЯЕМ УВЕДОМЛЕНИЕ о {len(self._lost_i_p_values)} потерянных записях")
                 
                 msg = f"⚠️ <b>Удалены строки с данными в I-P для заказа {order_number}:</b>\n\n"
                 
                 # Группируем потерянные записи по названию товара для компактности
                 grouped_lost = {}
-                for item in lost_i_p_values:
+                for item in self._lost_i_p_values:
                     name = item['name']
                     i_p_data = item['i_p_data']
                     if name not in grouped_lost:
@@ -1149,9 +1143,6 @@ class SheetsSynchronizer:
             for order in orders_list:
                 order_number = order.get('order_number')
                 
-                # Синхронизируем статусы разбитых товаров ПЕРЕД обновлением
-                self.sync_split_items_status(order)
-                
                 # Если заказ существует - проверяем на изменения
                 if order_number in existing_orders:
                     logger.info(f"🔍 Проверка заказа {order_number} на изменения...")
@@ -1185,7 +1176,7 @@ class SheetsSynchronizer:
                                 sync_send_message(f"✅ Заказ {order_number} обновлён")
                                 
                                 # Проверяем, есть ли потерянные значения I-P
-                                if hasattr(self, '_lost_i_p_values') and self._lost_i_p_values:
+                                if self._lost_i_p_values:
                                     lost_msg = self._format_lost_i_p_message(self._lost_i_p_values)
                                     if lost_msg:
                                         sync_send_message(lost_msg)
@@ -1260,26 +1251,10 @@ class SheetsSynchronizer:
                     summary_parts.append(f"➕ <b>Добавлено:</b> {len(new_orders)}")
                     summary_parts.append(f"📝 <b>Записано строк:</b> {len(all_rows)}")
                     
-                    # Добавляем отчет о потерянных значениях колонки I
-                    if hasattr(self, '_lost_i_values') and self._lost_i_values:
-                        summary_parts.append(f"\n❗ <b>Потеряно значений колонки I:</b> {len(self._lost_i_values)}")
-                        for item in self._lost_i_values[:5]:  # Первые 5
-                            summary_parts.append(f"  • <code>{item['old_name']}</code>: {item['value']}")
-                        if len(self._lost_i_values) > 5:
-                            summary_parts.append(f"  • ... ещё {len(self._lost_i_values) - 5}")
-                    
                     sync_send_message("✅ " + "\n".join(summary_parts))
             elif updated_orders:
                 # Были только обновления, без добавления новых
                 summary_msg = f"✅ <b>Обновлено заказов:</b> {len(updated_orders)}"
-                
-                # Добавляем отчет о потерянных значениях колонки I
-                if hasattr(self, '_lost_i_values') and self._lost_i_values:
-                    summary_msg += f"\n\n❗ <b>Потеряно значений колонки I:</b> {len(self._lost_i_values)}"
-                    for item in self._lost_i_values[:5]:  # Первые 5
-                        summary_msg += f"\n  • <code>{item['old_name']}</code>: {item['value']}"
-                    if len(self._lost_i_values) > 5:
-                        summary_msg += f"\n  • ... ещё {len(self._lost_i_values) - 5}"
                 
                 sync_send_message(summary_msg)
             
