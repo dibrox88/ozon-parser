@@ -1,6 +1,7 @@
 """Telegram бот для управления парсером Ozon."""
 
 import asyncio
+import atexit
 import io
 import os
 import sys
@@ -17,6 +18,9 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 
 from config import Config
 from prompt_manager import PromptManager
+
+# PID-файл для предотвращения запуска нескольких инстансов
+PID_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "telegram_bot.pid")
 
 # Глобальные переменные для отслеживания статуса парсинга
 parsing_in_progress = False
@@ -1259,9 +1263,64 @@ async def post_init(application: Application):
     logger.info("✅ Меню команд установлено")
 
 
+def check_pid_file() -> bool:
+    """
+    Проверить, не запущен ли уже другой инстанс бота.
+    Возвращает True, если можно запускать (нет другого инстанса).
+    """
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE, 'r') as f:
+                old_pid = int(f.read().strip())
+            
+            # Проверяем, жив ли процесс с этим PID
+            try:
+                os.kill(old_pid, 0)  # Сигнал 0 - проверка существования процесса
+                # Процесс жив
+                logger.error(f"❌ Другой инстанс бота уже запущен (PID: {old_pid})")
+                return False
+            except OSError:
+                # Процесс мёртв, удаляем старый PID-файл
+                logger.warning(f"⚠️ Найден устаревший PID-файл (PID {old_pid} не существует), удаляем")
+                os.remove(PID_FILE)
+        except (ValueError, IOError) as e:
+            logger.warning(f"⚠️ Ошибка чтения PID-файла: {e}, удаляем")
+            os.remove(PID_FILE)
+    
+    return True
+
+
+def create_pid_file() -> None:
+    """Создать PID-файл с текущим PID."""
+    with open(PID_FILE, 'w') as f:
+        f.write(str(os.getpid()))
+    logger.info(f"📝 Создан PID-файл: {PID_FILE} (PID: {os.getpid()})")
+
+
+def remove_pid_file() -> None:
+    """Удалить PID-файл при завершении."""
+    if os.path.exists(PID_FILE):
+        try:
+            os.remove(PID_FILE)
+            logger.info(f"🗑️ PID-файл удалён")
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось удалить PID-файл: {e}")
+
+
 def main():
     """Запуск бота."""
     global _bot_application
+    
+    # Проверяем, не запущен ли уже другой инстанс
+    if not check_pid_file():
+        logger.error("❌ Выход: другой инстанс бота уже запущен")
+        sys.exit(1)
+    
+    # Создаём PID-файл
+    create_pid_file()
+    
+    # Регистрируем удаление PID-файла при выходе
+    atexit.register(remove_pid_file)
     
     logger.info("🤖 Запуск Telegram бота для управления парсером...")
     

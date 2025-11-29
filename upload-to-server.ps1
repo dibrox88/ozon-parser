@@ -11,7 +11,7 @@ Write-Host "Remote: $REMOTE_DIR" -ForegroundColor Gray
 Write-Host ""
 
 # Файлы для загрузки (только исправленные)
-$files = @("main.py", "sheets_sync.py", "notifier.py", "auth.py", "wb_sheets_sync.py", "telegram_bot.py", "parse_wb.py", "product_matcher.py")
+$files = @("config.py","main.py", "sheets_sync.py", "notifier.py", "auth.py", "wb_sheets_sync.py", "telegram_bot.py", "parse_wb.py", "product_matcher.py")
 
 $success = 0
 $failed = 0

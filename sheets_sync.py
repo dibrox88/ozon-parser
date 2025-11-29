@@ -664,7 +664,7 @@ class SheetsSynchronizer:
                     msg += "\n0 - пропустить (данные будут потеряны)"
                     
                     try:
-                        response = sync_wait_for_input(msg, timeout=120, options=options)
+                        response = sync_wait_for_input(msg, timeout=0, options=options)
                         
                         if response and response.isdigit():
                             choice = int(response)
@@ -1267,16 +1267,14 @@ class SheetsSynchronizer:
                         if comparison['has_changes']:
                             logger.warning(f"⚠️ Обнаружены изменения в заказе {order_number}")
                             
-                            # Формируем сообщение для Telegram
-                            changes_text = "\n".join([f"  • {change}" for change in comparison['changes'][:5]])
-                            if len(comparison['changes']) > 5:
-                                changes_text += f"\n  • ... ещё {len(comparison['changes']) - 5} изменений"
+                            # Формируем сообщение для Telegram - показываем ВСЕ изменения
+                            changes_text = "\n".join([f"  • {change}" for change in comparison['changes']])
                             
-                            # Создаем ссылку на заказ
+                            # Ссылка на заказ отдельной строкой
                             order_link = f"https://www.ozon.ru/my/orderdetails/?order={order_number}"
                             
                             sync_send_message(
-                                f"⚠️ <b>Изменения в заказе <a href='{order_link}'>{order_number}</a>:</b>\n{changes_text}\n\n"
+                                f"⚠️ <b>Изменения в заказе {order_number}:</b>\n{order_link}\n\n{changes_text}\n\n"
                                 f"🔄 Обновляем данные..."
                             )
                             

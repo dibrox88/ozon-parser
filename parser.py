@@ -115,6 +115,64 @@ class OzonParser:
             logger.error(f"Ошибка при парсинге даты заказа: {e}")
             return None
     
+    def _expand_hidden_items(self) -> None:
+        """
+        Раскрыть скрытые товары на странице заказа.
+        
+        Ищет кнопку "Показать ещё X товаров" и кликает по ней,
+        пока такие кнопки есть на странице.
+        """
+        try:
+            max_clicks = 10  # Защита от бесконечного цикла
+            clicks = 0
+            
+            while clicks < max_clicks:
+                # Ищем кнопку по классу и тексту
+                # Класс: tsBodyControl500Medium
+                # Текст содержит: "Показать ещё"
+                show_more_button = self.page.query_selector(
+                    'div.tsBodyControl500Medium:has-text("Показать ещё")'
+                )
+                
+                if not show_more_button:
+                    # Альтернативный поиск через XPath
+                    show_more_button = self.page.query_selector(
+                        '//div[contains(@class, "tsBodyControl500Medium") and contains(text(), "Показать ещё")]'
+                    )
+                
+                if not show_more_button:
+                    if clicks == 0:
+                        logger.debug("Кнопка 'Показать ещё' не найдена - все товары уже отображены")
+                    break
+                
+                button_text = show_more_button.inner_text().strip()
+                logger.info(f"🔽 Нажимаем: {button_text}")
+                
+                # Кликаем по кнопке
+                show_more_button.click()
+                clicks += 1
+                
+                # Ждём загрузки новых товаров
+                time.sleep(1.5)
+                
+                # Ждём пока кнопка исчезнет или изменится
+                try:
+                    self.page.wait_for_selector(
+                        'div.tsBodyControl500Medium:has-text("Показать ещё")',
+                        state='hidden',
+                        timeout=3000
+                    )
+                except Exception:
+                    # Кнопка всё ещё видна - возможно, ещё есть скрытые товары
+                    pass
+            
+            if clicks > 0:
+                logger.info(f"✅ Раскрыто скрытых товаров: {clicks} клик(ов)")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка при раскрытии скрытых товаров: {e}")
+            # Не критично - продолжаем парсинг
+    
     def _parse_order_total(self) -> Optional[float]:
         """
         Извлечь общую сумму заказа.
@@ -600,6 +658,9 @@ class OzonParser:
             logger.debug(f"⏰ Задержка {post_delay:.1f}с после загрузки страницы")
             time.sleep(post_delay)
             
+            # Раскрываем скрытые товары, если есть кнопка "Показать ещё"
+            self._expand_hidden_items()
+            
             # Проверяем на блокировку
             page_title = self.page.title()
             if "Доступ ограничен" in page_title or "Access Denied" in page_title:
@@ -666,20 +727,17 @@ class OzonParser:
             
             # Отправляем информацию в Telegram
             order_url = f"https://www.ozon.ru/my/orderdetails/?order={order_number}"
-            message = f"📦 <a href='{order_url}'>{order_number}</a>\n\n"
+            message = f"📦 {order_number}\n{order_url}\n\n"
             message += f"📅 Дата: {order_date}\n"
             message += f"💰 Сумма: {total_amount} ₽\n"
             message += f"📊 Товаров: {total_items_quantity} шт ({len(all_items)} позиций)\n\n"
             
             if all_items:
                 message += "🛍 Товары:\n"
-                for i, item in enumerate(all_items[:5], 1):  # Показываем первые 5
+                for i, item in enumerate(all_items, 1):  # Показываем ВСЕ товары
                     message += f"{i}. {item['name']}\n"
                     message += f"   {item['quantity']} шт x {item['price']} ₽ = {item['quantity'] * item['price']} ₽\n"
                     message += f"   Статус: {item['status']}\n"
-                
-                if len(all_items) > 5:
-                    message += f"\n... и еще {len(all_items) - 5} товаров"
             
             sync_send_photo(screenshot, message)
             
