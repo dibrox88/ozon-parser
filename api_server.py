@@ -14,6 +14,10 @@ from typing import Optional
 import hashlib
 import hmac
 from loguru import logger
+from dotenv import load_dotenv
+
+# Загрузка переменных окружения из .env
+load_dotenv()
 
 # Настройка логирования
 logger.add(
@@ -48,20 +52,24 @@ class TriggerRequest(BaseModel):
     force: bool = False  # Принудительный запуск даже если уже выполняется
 
 
-def verify_api_key(authorization: Optional[str]) -> bool:
+def verify_api_key(api_key: Optional[str]) -> bool:
     """Проверка API ключа"""
-    if not authorization:
+    if not api_key:
+        logger.warning("🔑 API ключ не предоставлен")
         return False
     
     try:
-        # Ожидается формат: "Bearer <api_key>"
-        auth_type, token = authorization.split(" ")
-        if auth_type.lower() != "bearer":
-            return False
-        
-        # Сравнение с секретным ключом
-        return hmac.compare_digest(token, API_SECRET_KEY)
-    except Exception:
+        token = api_key.strip()
+        if token.lower().startswith("bearer "):
+            token = token.split(" ", 1)[1].strip()
+
+        # Сравнение с секретным ключом (используется hmac для защиты от timing attacks)
+        result = hmac.compare_digest(token, API_SECRET_KEY)
+        if not result:
+            logger.warning("🔑 Передан неверный API ключ")
+        return result
+    except Exception as e:
+        logger.error(f"🔑 Ошибка при сравнении: {e}")
         return False
 
 
@@ -295,6 +303,78 @@ async def test_telegram(api_key: str = Depends(verify_api_key)):
             "status": "error",
             "message": str(e)
         }
+
+
+@app.post("/api/mappings/upload")
+async def upload_mappings_endpoint(x_api_key: str = Header(None)):
+    """
+    Загрузить данные из Google Sheets в product_mappings.json на сервере.
+    "Загрузить на сервер" с точки зрения Google Sheets = Sheets → JSON
+    """
+    try:
+        # Проверка API ключа
+        if not verify_api_key(x_api_key):
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        
+        logger.info("📤 API: Загрузка данных из Sheets в JSON на сервере...")
+        
+        from mappings_sync import download_mappings_from_sheets
+        
+        # download_mappings_from_sheets читает ИЗ Sheets и пишет В JSON
+        success = download_mappings_from_sheets('product_mappings.json')
+        
+        if success:
+            logger.info("✅ API: Данные из Sheets сохранены в JSON")
+            return {
+                "status": "success",
+                "message": "Data from Sheets saved to JSON on server",
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            logger.error("❌ API: Ошибка сохранения данных")
+            raise HTTPException(status_code=500, detail="Failed to save data")
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ API: Ошибка: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/mappings/download")
+async def download_mappings_endpoint(x_api_key: str = Header(None)):
+    """
+    Скачать данные из product_mappings.json в Google Sheets.
+    "Скачать с сервера" с точки зрения Google Sheets = JSON → Sheets
+    """
+    try:
+        # Проверка API ключа
+        if not verify_api_key(x_api_key):
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        
+        logger.info("📥 API: Загрузка данных из JSON в Sheets...")
+        
+        from mappings_sync import upload_mappings_to_sheets
+        
+        # upload_mappings_to_sheets читает ИЗ JSON и пишет В Sheets
+        success = upload_mappings_to_sheets('product_mappings.json')
+        
+        if success:
+            logger.info("✅ API: JSON загружен в Sheets")
+            return {
+                "status": "success",
+                "message": "JSON data loaded to Sheets",
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            logger.error("❌ API: Ошибка загрузки в Sheets")
+            raise HTTPException(status_code=500, detail="Failed to load data to Sheets")
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ API: Ошибка: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
